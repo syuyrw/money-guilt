@@ -1,0 +1,4 @@
+plaid-python==44.0.0
+python-dotenv==1.0.0
+PyQt5==5.15.9
+Flask==3.0.0

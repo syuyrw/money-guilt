@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:plaid.com)",
+      "Bash(find /Users/jordanreitz/.claude -name \"*.md\" -type f | head -20)",
+      "Read(//Users/jordanreitz/.claude/**)",
+      "Bash(ls -la /Users/jordanreitz/.claude/ | grep -E \"memory|MEMORY|rules\")",
+      "Bash(mkdir -p /Users/jordanreitz/.claude/memory)"
+    ],
+    "additionalDirectories": [
+      "/Users/jordanreitz/.claude"
+    ]
+  }
+}
