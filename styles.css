@@ -1,10 +1,10 @@
 /* Money Guilt Widget Styles - macOS Dashboard Widget Style */
 
 QWidget {
-    background-color: rgba(0, 0, 0, 0.65);
+    background-color: rgba(0, 0, 0, 0.72);
     color: #fff;
     border-radius: 20px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.13);
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
 }
 
