@@ -48,7 +48,10 @@ class MoneyGuiltWidget(QWidget):
         # Layout
         layout = QVBoxLayout()
         layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(10)
+        layout.setSpacing(5)
+
+        # Top spacer
+        layout.addStretch()
 
         # Title label
         self.title_label = QLabel()
@@ -70,11 +73,13 @@ class MoneyGuiltWidget(QWidget):
         self.subtitle_label.setWordWrap(True)
         layout.addWidget(self.subtitle_label)
 
+        # Middle spacer
+        layout.addStretch()
+
         # Footer (last updated)
         self.footer_label = QLabel()
         self.footer_label.setObjectName("footer_label")
         self.footer_label.setAlignment(Qt.AlignCenter)
-        layout.addStretch()
         layout.addWidget(self.footer_label)
 
         self.setLayout(layout)
