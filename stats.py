@@ -6,155 +6,216 @@ from datetime import datetime, timedelta
 import random
 
 
-def get_spending_stats(days=30):
-    """Get various spending statistics"""
+VACATION_IDEAS = [
+    {"name": "Weekend in Cancun", "cost": 1000},
+    {"name": "Week in Costa Rica", "cost": 2000},
+    {"name": "Paris & London trip", "cost": 3500},
+    {"name": "Iceland adventure", "cost": 2500},
+    {"name": "Japan exploration", "cost": 4000},
+    {"name": "Caribbean cruise", "cost": 2000},
+    {"name": "Hawaii vacation", "cost": 1500},
+    {"name": "European tour", "cost": 5000},
+    {"name": "Bali resort week", "cost": 1800},
+    {"name": "New Zealand adventure", "cost": 3000},
+    {"name": "Thailand expedition", "cost": 2200},
+    {"name": "Ski trip to Colorado", "cost": 1200},
+    {"name": "Safari in Kenya", "cost": 3500},
+    {"name": "Norway fjord cruise", "cost": 2800},
+    {"name": "Greek islands escape", "cost": 2100},
+]
+
+
+def get_wasted_by_period():
+    """Get wasted spending by different time periods"""
+    # This week
+    this_week = get_wasteful_spending_for_days(7)['total']
+
+    # This month
+    this_month = get_wasteful_spending_for_days(30)['total']
+
+    # This year
+    this_year = get_wasteful_spending_for_days(365)['total']
+
     return {
-        'total_spending': get_total_spending(days),
-        'wasteful_spending': get_wasteful_spending(days),
-        'spending_by_category': get_transactions_by_category(days),
-        'accounts': get_accounts(),
-        'transactions': get_all_transactions(days),
+        'week': this_week,
+        'month': this_month,
+        'year': this_year,
     }
 
 
-def generate_stats_message(days=30):
-    """Generate different random stat messages to display"""
-    stats = get_spending_stats(days)
+def get_wasteful_spending_for_days(days):
+    """Get wasteful spending for specific number of days"""
+    from database import get_db
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT
+                SUM(amount) as total_wasteful,
+                COUNT(*) as count
+            FROM transactions
+            WHERE is_wasteful = 1
+            AND date >= date('now', '-' || ? || ' days')
+        """, (days,))
+        result = cursor.fetchone()
+    return {
+        'total': result['total_wasteful'] or 0,
+        'count': result['count'] or 0
+    }
 
-    messages = []
 
-    # Wasteful spending stat
-    wasteful = stats['wasteful_spending']
-    if wasteful['total'] > 0:
-        messages.append({
-            'type': 'wasteful_percentage',
-            'title': 'Wasteful Spending',
-            'value': f"${wasteful['total']:.2f}",
-            'subtitle': f"{wasteful['count']} wasteful transactions this month"
-        })
+def get_wasteful_percentage():
+    """Get percentage of spending that is wasteful"""
+    total = get_total_spending(365)  # Year
+    wasteful = get_wasteful_spending(365)['total']
 
-    # Top spending category
-    categories = stats['spending_by_category']
-    if categories:
-        top_cat = categories[0]
-        messages.append({
-            'type': 'top_category',
-            'title': 'Top Spending Category',
-            'value': top_cat['category_primary'] or 'Uncategorized',
-            'subtitle': f"${abs(top_cat['total']):.2f} ({top_cat['count']} transactions)"
-        })
-
-    # Largest single transaction
-    transactions = stats['transactions']
-    if transactions:
-        largest_tx = max(transactions, key=lambda x: abs(x['amount']))
-        messages.append({
-            'type': 'largest_transaction',
-            'title': 'Largest Spending',
-            'value': largest_tx['name'],
-            'subtitle': f"${largest_tx['amount']:.2f} on {largest_tx['date']}"
-        })
-
-    # Total spending
-    total = stats['total_spending']
     if total > 0:
-        messages.append({
-            'type': 'total_spending',
-            'title': 'Total Spending',
-            'value': f"${total:.2f}",
-            'subtitle': f"Over the past {days} days"
+        percentage = (wasteful / total * 100)
+    else:
+        percentage = 0
+
+    return {
+        'percentage': percentage,
+        'total_spending': total,
+        'total_wasteful': wasteful,
+    }
+
+
+def get_top_wasteful_vendor():
+    """Get the vendor where most wasteful money was spent"""
+    from database import get_db
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT
+                name,
+                COUNT(*) as count,
+                SUM(amount) as total
+            FROM transactions
+            WHERE is_wasteful = 1
+            AND date >= date('now', '-365 days')
+            GROUP BY name
+            ORDER BY total DESC
+            LIMIT 1
+        """)
+        result = cursor.fetchone()
+
+    if result:
+        return {
+            'vendor': result['name'],
+            'count': result['count'],
+            'total': result['total'],
+        }
+    return None
+
+
+def get_vacation_suggestion(year_wasted):
+    """Get a vacation suggestion based on wasted money"""
+    # Find vacations they could afford
+    affordable = [v for v in VACATION_IDEAS if v['cost'] <= year_wasted]
+
+    if affordable:
+        return random.choice(affordable)
+
+    # If nothing affordable, suggest the cheapest
+    return min(VACATION_IDEAS, key=lambda x: x['cost'])
+
+
+def generate_stats_list():
+    """Generate all available stats"""
+    stats = []
+
+    # Wasted by period
+    wasted = get_wasted_by_period()
+
+    # Stat 1: Total wasted this year
+    if wasted['year'] > 0:
+        stats.append({
+            'type': 'wasted_year',
+            'title': 'Total Wasted This Year',
+            'value': f"${wasted['year']:.2f}",
+            'subtitle': 'Money spent on wasteful purchases',
+            'data': {'amount': wasted['year']}
         })
 
-    # Opportunity cost (what you could've done with wasteful money)
-    if wasteful['total'] > 0:
-        messages.append({
-            'type': 'opportunity_cost',
-            'title': 'What You Could Have Done',
-            'value': _get_opportunity_cost_item(wasteful['total']),
-            'subtitle': f"Instead of spending ${wasteful['total']:.2f} on wasteful things"
+    # Stat 2: Total wasted this month
+    if wasted['month'] > 0:
+        stats.append({
+            'type': 'wasted_month',
+            'title': 'Total Wasted This Month',
+            'value': f"${wasted['month']:.2f}",
+            'subtitle': 'Money spent on wasteful purchases',
+            'data': {'amount': wasted['month']}
         })
 
-    # Most common merchant
-    if transactions:
-        merchants = {}
-        for tx in transactions:
-            name = tx['name']
-            merchants[name] = merchants.get(name, 0) + 1
-        most_common = max(merchants.items(), key=lambda x: x[1])
-        if most_common[1] > 1:
-            messages.append({
-                'type': 'most_common_merchant',
-                'title': 'Favorite Merchant',
-                'value': most_common[0],
-                'subtitle': f"Visited {most_common[1]} times this month"
-            })
-
-    # Spending per day
-    if transactions:
-        spending_per_day = total / days
-        messages.append({
-            'type': 'spending_per_day',
-            'title': 'Daily Average',
-            'value': f"${spending_per_day:.2f}/day",
-            'subtitle': f"Average daily spending"
+    # Stat 3: Total wasted this week
+    if wasted['week'] > 0:
+        stats.append({
+            'type': 'wasted_week',
+            'title': 'Total Wasted This Week',
+            'value': f"${wasted['week']:.2f}",
+            'subtitle': 'Money spent on wasteful purchases',
+            'data': {'amount': wasted['week']}
         })
 
-    return messages
+    # Stat 4: Percentage wasted
+    pct_data = get_wasteful_percentage()
+    if pct_data['total_spending'] > 0:
+        stats.append({
+            'type': 'wasted_percentage',
+            'title': 'Percent of Spending Wasted',
+            'value': f"{pct_data['percentage']:.1f}%",
+            'subtitle': f"Out of ${pct_data['total_spending']:.2f} total spending",
+            'data': {
+                'percentage': pct_data['percentage'],
+                'total': pct_data['total_spending'],
+                'wasteful': pct_data['total_wasteful']
+            }
+        })
+
+    # Stat 5: Vacation suggestion
+    if wasted['year'] > 0:
+        vacation = get_vacation_suggestion(wasted['year'])
+        stats.append({
+            'type': 'vacation_idea',
+            'title': 'Dream Vacation You Could Afford',
+            'value': vacation['name'],
+            'subtitle': f"Instead of wasting ${wasted['year']:.2f} this year",
+            'data': {'cost': vacation['cost'], 'wasted': wasted['year']}
+        })
+
+    # Stat 6: Top wasteful vendor
+    vendor = get_top_wasteful_vendor()
+    if vendor:
+        stats.append({
+            'type': 'top_wasteful_vendor',
+            'title': 'Biggest Waste Vendor',
+            'value': vendor['vendor'],
+            'subtitle': f"${vendor['total']:.2f} wasted ({vendor['count']} purchases)",
+            'data': vendor
+        })
+
+    return stats if stats else [get_no_data_stat()]
 
 
-def get_random_stat(days=30):
-    """Get a random stat message"""
-    messages = generate_stats_message(days)
-    if messages:
-        return random.choice(messages)
+def get_no_data_stat():
+    """Return a stat when no data is available"""
     return {
         'type': 'no_data',
-        'title': 'No Data',
-        'value': 'Link your account',
-        'subtitle': 'Start tracking your spending'
+        'title': 'No Data Yet',
+        'value': 'Mark transactions as wasteful',
+        'subtitle': 'to see spending insights',
+        'data': {}
     }
 
 
-def _get_opportunity_cost_item(amount):
-    """Suggest something the person could have bought with that money"""
-    items = [
-        ("A nice dinner", 50),
-        ("Movie tickets", 30),
-        ("Coffee for a month", 60),
-        ("A book", 15),
-        ("New shoes", 80),
-        ("A video game", 60),
-        ("Concert tickets", 100),
-        ("A flight", 200),
-        ("A nice bottle of wine", 40),
-        ("A week of groceries", 100),
-    ]
-
-    # Find what they could have bought
-    affordable_items = [item for item, cost in items if cost <= amount]
-
-    if affordable_items:
-        item = random.choice(affordable_items)
-        return item
-
-    return f"{int(amount)} coffees"
+def get_random_stat():
+    """Get a random stat from available stats"""
+    stats = generate_stats_list()
+    if stats:
+        return random.choice(stats)
+    return get_no_data_stat()
 
 
-def get_spending_summary(days=30):
-    """Get a text summary of spending"""
-    stats = get_spending_stats(days)
-    total = stats['total_spending']
-    wasteful = stats['wasteful_spending']
-
-    if wasteful['total'] > 0:
-        wasteful_pct = (wasteful['total'] / total * 100) if total > 0 else 0
-    else:
-        wasteful_pct = 0
-
-    return {
-        'total_spending': f"${total:.2f}",
-        'wasteful_spending': f"${wasteful['total']:.2f}",
-        'wasteful_percentage': f"{wasteful_pct:.1f}%",
-        'account_balance': stats['accounts'][0]['balance'] if stats['accounts'] else 0,
-        'transaction_count': len(stats['transactions'])
-    }
+def get_all_stats():
+    """Get all stats at once"""
+    return generate_stats_list()

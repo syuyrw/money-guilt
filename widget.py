@@ -7,8 +7,8 @@ os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = '/usr/local/lib/python3.14/site-pack
 
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel
 from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal
-from PyQt5.QtGui import QFont, QColor, QPalette
-from stats import get_random_stat, get_spending_summary
+from PyQt5.QtGui import QFont
+from stats import get_random_stat, get_all_stats
 from datetime import datetime
 
 logging.basicConfig(level=logging.INFO)
@@ -23,6 +23,8 @@ class MoneyGuiltWidget(QWidget):
     def __init__(self):
         super().__init__()
         self.current_stat = None
+        self.stats = []
+        self.current_stat_index = 0
         self.init_ui()
         self.setup_timers()
 
@@ -75,6 +77,9 @@ class MoneyGuiltWidget(QWidget):
 
         self.setLayout(layout)
 
+        # Load all stats
+        self.load_stats()
+
         # Show initial stat
         self.show_next_stat()
 
@@ -89,6 +94,13 @@ class MoneyGuiltWidget(QWidget):
         except FileNotFoundError:
             logger.warning("styles.css not found, using default styling")
             self.setStyleSheet("QWidget { background-color: #1a1a1a; color: #fff; }")
+
+    def load_stats(self):
+        """Load all available stats"""
+        self.stats = get_all_stats()
+        logger.info(f"Loaded {len(self.stats)} stats")
+        if self.stats:
+            logger.info(f"Available stats: {[s['type'] for s in self.stats]}")
 
     def setup_timers(self):
         """Setup timers for updating stats"""
@@ -105,16 +117,32 @@ class MoneyGuiltWidget(QWidget):
         logger.info("Timers started: stat rotation every hour")
 
     def show_next_stat(self):
-        """Display the next random stat"""
-        stat = get_random_stat(30)
+        """Display the next stat in rotation"""
+        if not self.stats:
+            self.load_stats()
+
+        if not self.stats:
+            stat = {
+                'type': 'no_data',
+                'title': 'No Data',
+                'value': 'No wasteful spending tracked',
+                'subtitle': 'Mark transactions as wasteful to see stats',
+            }
+        else:
+            stat = self.stats[self.current_stat_index % len(self.stats)]
+            self.current_stat_index += 1
+
+        self.display_stat(stat)
+        self.update_footer()
+        logger.info(f"Displaying stat: {stat['type']}")
+
+    def display_stat(self, stat):
+        """Display a specific stat"""
         self.current_stat = stat
 
         self.title_label.setText(stat.get('title', ''))
         self.value_label.setText(str(stat.get('value', '')))
         self.subtitle_label.setText(stat.get('subtitle', ''))
-
-        self.update_footer()
-        logger.info(f"Displaying stat: {stat['type']}")
 
     def update_footer(self):
         """Update the footer timestamp"""
@@ -127,19 +155,12 @@ class MoneyGuiltWidget(QWidget):
             self.show_next_stat()
 
     def mouseDoubleClickEvent(self, event):
-        """Open dashboard on double-click (placeholder for future)"""
+        """Reload stats on double-click"""
         if event.button() == Qt.LeftButton:
-            logger.info("Double-click: would open dashboard")
-
-    def show_summary(self):
-        """Show spending summary in console"""
-        summary = get_spending_summary(30)
-        print("\n" + "=" * 50)
-        print("Money Guilt - Spending Summary")
-        print("=" * 50)
-        for key, value in summary.items():
-            print(f"{key.replace('_', ' ').title()}: {value}")
-        print("=" * 50 + "\n")
+            logger.info("Reloading stats...")
+            self.load_stats()
+            self.current_stat_index = 0
+            self.show_next_stat()
 
 
 def main():
