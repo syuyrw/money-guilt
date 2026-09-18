@@ -6,8 +6,8 @@ import logging
 os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = '/usr/local/lib/python3.14/site-packages/PyQt5/Qt5/plugins'
 
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel
-from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal, QRectF
-from PyQt5.QtGui import QFont, QCursor, QRegion, QPainterPath
+from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal
+from PyQt5.QtGui import QFont, QCursor
 from stats import get_random_stat, get_all_stats
 from datetime import datetime
 
@@ -45,9 +45,6 @@ class MoneyGuiltWidget(QWidget):
 
         # Set size
         self.setFixedSize(QSize(400, 250))
-
-        # Set rounded corners mask
-        self.set_rounded_corners(28)
 
         # Load stylesheet
         self.load_stylesheet()
@@ -96,13 +93,6 @@ class MoneyGuiltWidget(QWidget):
 
         # Show initial stat
         self.show_next_stat()
-
-    def set_rounded_corners(self, radius):
-        """Apply rounded corners to widget window"""
-        path = QPainterPath()
-        path.addRoundedRect(QRectF(0, 0, self.width(), self.height()), radius, radius)
-        region = QRegion(path.toFillPolygon().toPolygon())
-        self.setMask(region)
 
     def load_stylesheet(self):
         """Load stylesheet from CSS file"""
