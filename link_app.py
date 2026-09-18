@@ -5,8 +5,9 @@ from flask import Flask, render_template, request, jsonify
 from plaid_client import PlaidClient
 import logging
 import json
+import os
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='static', static_url_path='/static')
 client = PlaidClient()
 
 logging.basicConfig(level=logging.INFO)
