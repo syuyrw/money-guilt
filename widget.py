@@ -30,16 +30,16 @@ class MoneyGuiltWidget(QWidget):
         """Initialize the UI"""
         self.setWindowTitle("Money Guilt")
         self.setWindowFlags(
+            Qt.Window |
             Qt.WindowStaysOnTopHint |
-            Qt.FramelessWindowHint |
-            Qt.WindowType_Mask
+            Qt.FramelessWindowHint
         )
 
         # Set size
-        self.setFixedSize(QSize(320, 200))
+        self.setFixedSize(QSize(400, 250))
 
-        # Dark theme
-        self.set_dark_theme()
+        # Load stylesheet
+        self.load_stylesheet()
 
         # Layout
         layout = QVBoxLayout()
@@ -48,32 +48,28 @@ class MoneyGuiltWidget(QWidget):
 
         # Title label
         self.title_label = QLabel()
-        self.title_label.setFont(QFont("Helvetica", 12, QFont.Bold))
+        self.title_label.setObjectName("title_label")
         self.title_label.setAlignment(Qt.AlignCenter)
-        self.title_label.setStyleSheet("color: #aaa; text-transform: uppercase; letter-spacing: 1px;")
         layout.addWidget(self.title_label)
 
         # Value label (large)
         self.value_label = QLabel()
-        self.value_label.setFont(QFont("Helvetica", 32, QFont.Bold))
+        self.value_label.setObjectName("value_label")
         self.value_label.setAlignment(Qt.AlignCenter)
-        self.value_label.setStyleSheet("color: #fff;")
         self.value_label.setWordWrap(True)
         layout.addWidget(self.value_label)
 
         # Subtitle label
         self.subtitle_label = QLabel()
-        self.subtitle_label.setFont(QFont("Helvetica", 10))
+        self.subtitle_label.setObjectName("subtitle_label")
         self.subtitle_label.setAlignment(Qt.AlignCenter)
-        self.subtitle_label.setStyleSheet("color: #666;")
         self.subtitle_label.setWordWrap(True)
         layout.addWidget(self.subtitle_label)
 
         # Footer (last updated)
         self.footer_label = QLabel()
-        self.footer_label.setFont(QFont("Helvetica", 8))
+        self.footer_label.setObjectName("footer_label")
         self.footer_label.setAlignment(Qt.AlignCenter)
-        self.footer_label.setStyleSheet("color: #444;")
         layout.addStretch()
         layout.addWidget(self.footer_label)
 
@@ -82,18 +78,17 @@ class MoneyGuiltWidget(QWidget):
         # Show initial stat
         self.show_next_stat()
 
-    def set_dark_theme(self):
-        """Apply dark theme"""
-        dark_stylesheet = """
-            QWidget {
-                background-color: #1a1a1a;
-                color: #fff;
-            }
-            QLabel {
-                color: #fff;
-            }
-        """
-        self.setStyleSheet(dark_stylesheet)
+    def load_stylesheet(self):
+        """Load stylesheet from CSS file"""
+        try:
+            css_path = os.path.join(os.path.dirname(__file__), 'styles.css')
+            with open(css_path, 'r') as f:
+                stylesheet = f.read()
+            self.setStyleSheet(stylesheet)
+            logger.info("Stylesheet loaded from styles.css")
+        except FileNotFoundError:
+            logger.warning("styles.css not found, using default styling")
+            self.setStyleSheet("QWidget { background-color: #1a1a1a; color: #fff; }")
 
     def setup_timers(self):
         """Setup timers for updating stats"""
@@ -153,16 +148,24 @@ def main():
 
     # Create and show widget
     widget = MoneyGuiltWidget()
-    widget.show()
 
     # Position in corner (top-right)
     screen = app.primaryScreen()
-    size = widget.frameGeometry()
-    x = screen.availableGeometry().right() - size.width() - 20
-    y = screen.availableGeometry().top() + 20
-    widget.move(x, y)
+    screen_geom = screen.availableGeometry()
 
-    logger.info(f"Widget started at ({x}, {y})")
+    # Position: right edge - 20px padding, top + 20px padding
+    x = screen_geom.right() - 420  # widget width + padding
+    y = screen_geom.top() + 20
+
+    logger.info(f"Screen geometry: {screen_geom.width()}x{screen_geom.height()}")
+    logger.info(f"Positioning widget at ({x}, {y})")
+
+    widget.move(x, y)
+    widget.show()
+    widget.raise_()
+    widget.activateWindow()
+
+    logger.info(f"Widget shown at ({x}, {y})")
 
     sys.exit(app.exec_())
 
