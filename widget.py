@@ -7,7 +7,7 @@ os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = '/usr/local/lib/python3.14/site-pack
 
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel
 from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal
-from PyQt5.QtGui import QFont, QCursor
+from PyQt5.QtGui import QFont, QCursor, QPainter, QPen, QColor, QBrush
 from stats import get_random_stat, get_all_stats
 from datetime import datetime
 
@@ -93,6 +93,22 @@ class MoneyGuiltWidget(QWidget):
 
         # Show initial stat
         self.show_next_stat()
+
+    def paintEvent(self, event):
+        """Draw white border and rounded corners"""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # Draw white border with rounded corners
+        pen = QPen(QColor(255, 255, 255), 5)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+
+        # Draw rounded rectangle border
+        rect = self.rect()
+        painter.drawRoundedRect(rect.adjusted(2, 2, -2, -2), 24, 24)
+
+        super().paintEvent(event)
 
     def load_stylesheet(self):
         """Load stylesheet from CSS file"""
