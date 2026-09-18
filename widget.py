@@ -7,7 +7,7 @@ os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = '/usr/local/lib/python3.14/site-pack
 
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel
 from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QCursor
 from stats import get_random_stat, get_all_stats
 from datetime import datetime
 
@@ -40,8 +40,8 @@ class MoneyGuiltWidget(QWidget):
             Qt.NoDropShadowWindowHint
         )
 
-        # Enable transparency
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        # Note: Removed WA_TranslucentBackground as it was making widget invisible
+        # The CSS provides the semi-transparent effect
 
         # Set size
         self.setFixedSize(QSize(400, 250))
@@ -202,21 +202,23 @@ def main():
     # Create and show widget
     widget = MoneyGuiltWidget()
 
-    # Position in corner (top-right)
+    # Position in top-right of primary monitor
     screen = app.primaryScreen()
-    screen_geom = screen.availableGeometry()
+    screen_geom = screen.geometry()
 
-    # Position: right edge - 20px padding, top + 20px padding
-    x = screen_geom.right() - 420  # widget width + padding
-    y = screen_geom.top() + 20
+    # Top-right corner with padding
+    x = screen_geom.width() - 420  # widget width + 20px padding
+    y = 20
 
-    logger.info(f"Screen geometry: {screen_geom.width()}x{screen_geom.height()}")
+    logger.info(f"Screen: {screen.name()}, Geometry: {screen_geom.width()}x{screen_geom.height()}")
     logger.info(f"Positioning widget at ({x}, {y})")
 
     widget.move(x, y)
+    widget.setVisible(True)
     widget.show()
     widget.raise_()
     widget.activateWindow()
+    widget.setFocus()
 
     logger.info(f"Widget shown at ({x}, {y})")
 
