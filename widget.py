@@ -51,8 +51,8 @@ class MoneyGuiltWidget(QWidget):
 
         # Layout
         layout = QVBoxLayout()
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(5)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(6)
 
         # Top spacer
         layout.addStretch()
