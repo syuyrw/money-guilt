@@ -100,13 +100,13 @@ class MoneyGuiltWidget(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
 
         # Draw white border with rounded corners
-        pen = QPen(QColor(255, 255, 255), 5)
+        pen = QPen(QColor(255, 255, 255), 2)
         painter.setPen(pen)
         painter.setBrush(Qt.NoBrush)
 
         # Draw rounded rectangle border
         rect = self.rect()
-        painter.drawRoundedRect(rect.adjusted(2, 2, -2, -2), 24, 24)
+        painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), 24, 24)
 
         super().paintEvent(event)
 
