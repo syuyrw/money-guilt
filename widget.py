@@ -36,8 +36,12 @@ class MoneyGuiltWidget(QWidget):
         self.setWindowFlags(
             Qt.Window |
             Qt.WindowStaysOnTopHint |
-            Qt.FramelessWindowHint
+            Qt.FramelessWindowHint |
+            Qt.NoDropShadowWindowHint
         )
+
+        # Enable transparency
+        self.setAttribute(Qt.WA_TranslucentBackground)
 
         # Set size
         self.setFixedSize(QSize(400, 250))

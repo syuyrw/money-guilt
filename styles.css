@@ -1,8 +1,9 @@
 /* Money Guilt Widget Styles */
 
 QWidget {
-    background-color: #1a1a1a;
+    background-color: rgba(26, 26, 26, 0.85);
     color: #fff;
+    border-radius: 16px;
 }
 
 QLabel {
