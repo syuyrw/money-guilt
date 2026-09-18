@@ -2,7 +2,7 @@
 <html>
 <head>
     <title>Link Your Bank Account - Money Guilt</title>
-    <script src="https://cdn.plaid.com/link/v3/stable/link-initialize.js"></script>
+    <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js" onload="window.PlaidLoaded=true"></script>
     <style>
         * { box-sizing: border-box; }
         body {
@@ -197,14 +197,9 @@
             };
 
             try {
-                Plaid.create(config).then(handler => {
-                    plaidHandler = handler;
-                    log('Plaid handler created successfully');
-                    document.getElementById('linkButton').disabled = false;
-                }).catch(err => {
-                    log('Error creating handler: ' + err);
-                    showMessage('Error initializing Plaid: ' + err, 'error');
-                });
+                plaidHandler = Plaid.create(config);
+                log('Plaid handler created successfully');
+                document.getElementById('linkButton').disabled = false;
             } catch (err) {
                 log('Exception creating Plaid: ' + err);
                 showMessage('Error: ' + err, 'error');
