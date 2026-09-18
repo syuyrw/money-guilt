@@ -6,7 +6,7 @@ import logging
 os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = '/usr/local/lib/python3.14/site-packages/PyQt5/Qt5/plugins'
 
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel
-from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal, QRect
+from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal, QRectF
 from PyQt5.QtGui import QFont, QCursor, QRegion, QPainterPath
 from stats import get_random_stat, get_all_stats
 from datetime import datetime
@@ -100,7 +100,7 @@ class MoneyGuiltWidget(QWidget):
     def set_rounded_corners(self, radius):
         """Apply rounded corners to widget window"""
         path = QPainterPath()
-        path.addRoundedRect(QRect(0, 0, self.width(), self.height()), radius, radius)
+        path.addRoundedRect(QRectF(0, 0, self.width(), self.height()), radius, radius)
         region = QRegion(path.toFillPolygon().toPolygon())
         self.setMask(region)
 
