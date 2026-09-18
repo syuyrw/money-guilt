@@ -3,8 +3,6 @@
 QWidget {
     background-color: #1a1a1a;
     color: #fff;
-    border: 2px solid #667eea;
-    border-radius: 8px;
 }
 
 QLabel {

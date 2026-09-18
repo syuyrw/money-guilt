@@ -25,6 +25,7 @@ class MoneyGuiltWidget(QWidget):
         self.current_stat = None
         self.stats = []
         self.current_stat_index = 0
+        self.drag_position = None
         self.init_ui()
         self.setup_timers()
 
@@ -150,9 +151,22 @@ class MoneyGuiltWidget(QWidget):
         self.footer_label.setText(f"Last updated: {now}")
 
     def mousePressEvent(self, event):
-        """Change stat on click"""
+        """Start dragging on left click"""
         if event.button() == Qt.LeftButton:
-            self.show_next_stat()
+            self.drag_position = event.globalPos() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        """Move window while dragging"""
+        if event.buttons() == Qt.LeftButton and self.drag_position is not None:
+            self.move(event.globalPos() - self.drag_position)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        """End dragging"""
+        if event.button() == Qt.LeftButton:
+            self.drag_position = None
+            event.accept()
 
     def mouseDoubleClickEvent(self, event):
         """Reload stats on double-click"""
