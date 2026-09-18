@@ -49,13 +49,13 @@ class MoneyGuiltWidget(QWidget):
         # Load stylesheet
         self.load_stylesheet()
 
-        # Apply rounded corners after stylesheet
-        self.apply_rounded_corners(28)
+        # Apply rounded corners after stylesheet - Section 2 (24px per Tahoe)
+        self.apply_rounded_corners(24)
 
-        # Layout
+        # Layout - Section 2 (Shape and Size) - 16px content padding per Tahoe spec
         layout = QVBoxLayout()
-        layout.setContentsMargins(28, 24, 28, 24)
-        layout.setSpacing(8)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(8)  # Section 2.1 - 8px spacing for related items
 
         # Top spacer
         layout.addStretch()
