@@ -99,8 +99,8 @@ class MoneyGuiltWidget(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        # Draw white border with rounded corners
-        pen = QPen(QColor(255, 255, 255), 2)
+        # Draw dark grey border with rounded corners
+        pen = QPen(QColor(100, 100, 100), 1)
         painter.setPen(pen)
         painter.setBrush(Qt.NoBrush)
 
