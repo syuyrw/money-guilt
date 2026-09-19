@@ -15,6 +15,9 @@ from datetime import datetime
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Dollar figures that represent waste, and the ring's filled arc.
+WASTED_COLOR = "rgb(255, 100, 100)"
+
 
 class MoneyGuiltWidget(QWidget):
     """Desktop widget for Money Guilt spending tracker"""
@@ -377,8 +380,23 @@ class MoneyGuiltWidget(QWidget):
             # tight opening.
             value_text = value_text.rstrip('%')
 
+        # A dollar figure is only reddened when the stat says it represents
+        # waste. The percentage stat's subtitle also carries a figure, but
+        # that one is total spending, so it stays in the normal colour.
+        wasted_text = stat.get('wasted_text')
+
         self.title_label.setText(stat.get('title', ''))
+
+        # Coloured through the stylesheet rather than as rich text, so the
+        # width measurement in _fitted_value_size still sees plain text.
         self.value_label.setText(value_text)
+        self.value_label.setStyleSheet(
+            f"color: {WASTED_COLOR};" if wasted_text == value_text else "")
+
+        if wasted_text and wasted_text in subtitle:
+            subtitle = subtitle.replace(
+                wasted_text,
+                f'<span style="color: {WASTED_COLOR}">{wasted_text}</span>')
         self.subtitle_label.setText(subtitle)
         # An empty subtitle would otherwise hold an blank row open under
         # the value.

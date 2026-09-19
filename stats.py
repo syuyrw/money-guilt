@@ -134,6 +134,7 @@ def generate_stats_list():
             'title': 'Total Wasted This Year',
             'value': f"${wasted['year']:.2f}",
             'subtitle': '',
+            'wasted_text': f"${wasted['year']:.2f}",
             'data': {'amount': wasted['year']}
         })
 
@@ -144,6 +145,7 @@ def generate_stats_list():
             'title': 'Total Wasted This Month',
             'value': f"${wasted['month']:.2f}",
             'subtitle': 'Money spent on wasteful purchases',
+            'wasted_text': f"${wasted['month']:.2f}",
             'data': {'amount': wasted['month']}
         })
 
@@ -154,6 +156,7 @@ def generate_stats_list():
             'title': 'Total Wasted This Week',
             'value': f"${wasted['week']:.2f}",
             'subtitle': 'Money spent on wasteful purchases',
+            'wasted_text': f"${wasted['week']:.2f}",
             'data': {'amount': wasted['week']}
         })
 
@@ -164,6 +167,7 @@ def generate_stats_list():
             'type': 'wasted_percentage',
             'title': 'Percent of Spending Wasted',
             'value': f"{pct_data['percentage']:.1f}%",
+            # No wasted_text: this figure is total spending, not waste.
             'subtitle': f"Out of ${pct_data['total_spending']:.2f} total spending",
             'data': {
                 'percentage': pct_data['percentage'],
@@ -184,6 +188,7 @@ def generate_stats_list():
             'title': f"You could have afforded {article}",
             'value': vacation['name'],
             'subtitle': f"Instead of wasting ${wasted['year']:.2f} this year",
+            'wasted_text': f"${wasted['year']:.2f}",
             'data': {'cost': vacation['cost'], 'wasted': wasted['year']}
         })
 
@@ -195,6 +200,7 @@ def generate_stats_list():
             'title': 'Biggest Waste Vendor',
             'value': vendor['vendor'],
             'subtitle': f"${vendor['total']:.2f} wasted ({vendor['count']} purchases)",
+            'wasted_text': f"${vendor['total']:.2f}",
             'data': vendor
         })
 
