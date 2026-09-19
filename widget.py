@@ -81,17 +81,14 @@ class MoneyGuiltWidget(QWidget):
 
         main_layout.addLayout(header_layout)
 
-        # Top spacer to center content
-        main_layout.addStretch()
-
-        # Title label
+        # Title label (no extra space)
         self.title_label = QLabel()
         self.title_label.setObjectName("title_label")
         self.title_label.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(self.title_label)
 
-        # Spacer before value
-        main_layout.addStretch()
+        # Large spacer above value (centers it)
+        main_layout.addStretch(1)
 
         # Value label (large)
         self.value_label = QLabel()
@@ -100,25 +97,22 @@ class MoneyGuiltWidget(QWidget):
         self.value_label.setWordWrap(True)
         main_layout.addWidget(self.value_label)
 
-        # Spacer after value
-        main_layout.addStretch()
+        # Large spacer below value (centers it)
+        main_layout.addStretch(1)
 
-        # Subtitle label
+        # Subtitle label (no extra space)
         self.subtitle_label = QLabel()
         self.subtitle_label.setObjectName("subtitle_label")
         self.subtitle_label.setAlignment(Qt.AlignCenter)
         self.subtitle_label.setWordWrap(True)
         main_layout.addWidget(self.subtitle_label)
 
-        # Chart container (for percentage stats)
+        # Chart container (for percentage stats, no extra space)
         self.chart_label = QLabel()
         self.chart_label.setObjectName("chart_label")
         self.chart_label.setAlignment(Qt.AlignCenter)
         self.chart_label.setFixedHeight(40)
         main_layout.addWidget(self.chart_label)
-
-        # Bottom spacer to center content
-        main_layout.addStretch()
 
         # Footer with next button
         footer_layout = QHBoxLayout()
