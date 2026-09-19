@@ -9,6 +9,7 @@ from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLa
 from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal, QRect, QRectF
 from PyQt5.QtGui import QFont, QCursor, QPainter, QPen, QColor, QBrush, QPixmap, QIcon, QPainterPath, QRegion
 from stats import get_random_stat, get_all_stats
+from categorization_dialog import CategorizationDialog
 from datetime import datetime
 
 logging.basicConfig(level=logging.INFO)
@@ -191,6 +192,12 @@ class MoneyGuiltWidget(QWidget):
 
         tray_menu.addSeparator()
 
+        # Categorize transactions
+        categorize_action = tray_menu.addAction("Categorize Transactions")
+        categorize_action.triggered.connect(self.open_categorization_dialog)
+
+        tray_menu.addSeparator()
+
         # Quit action
         quit_action = tray_menu.addAction("Quit Money Guilt")
         quit_action.triggered.connect(self.quit_app)
@@ -212,6 +219,12 @@ class MoneyGuiltWidget(QWidget):
         self.tray_icon.show()
 
         logger.info("System tray icon created")
+
+    def open_categorization_dialog(self):
+        """Open transaction categorization dialog"""
+        dialog = CategorizationDialog(self)
+        dialog.exec_()
+        logger.info("Categorization dialog opened")
 
     def toggle_widget(self):
         """Toggle widget visibility"""
