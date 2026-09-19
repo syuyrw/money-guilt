@@ -5,7 +5,7 @@ import logging
 # Set Qt plugin path for macOS
 os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = '/usr/local/lib/python3.14/site-packages/PyQt5/Qt5/plugins'
 
-from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSystemTrayIcon, QMenu
+from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSystemTrayIcon, QMenu, QSizeGrip
 from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal, QRect
 from PyQt5.QtGui import QFont, QCursor, QPainter, QPen, QColor, QBrush, QPixmap, QIcon
 from stats import get_random_stat, get_all_stats
@@ -43,8 +43,9 @@ class MoneyGuiltWidget(QWidget):
         # Note: Removed WA_TranslucentBackground as it was making widget invisible
         # The CSS provides the semi-transparent effect
 
-        # Set size
-        self.setFixedSize(QSize(400, 250))
+        # Set resizable size with minimum constraints
+        self.setMinimumSize(QSize(280, 200))
+        self.resize(QSize(400, 250))
 
         # Load stylesheet
         self.load_stylesheet()
@@ -128,6 +129,11 @@ class MoneyGuiltWidget(QWidget):
         self.next_button.clicked.connect(self.show_next_stat)
         footer_layout.addWidget(self.next_button)
         footer_layout.addStretch()
+
+        # Size grip for resizing
+        size_grip = QSizeGrip(self)
+        size_grip.setStyleSheet("QSizeGrip { width: 16px; height: 16px; }")
+        footer_layout.addWidget(size_grip)
 
         layout.addLayout(footer_layout)
 
