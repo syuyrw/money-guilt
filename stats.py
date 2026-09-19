@@ -199,7 +199,10 @@ def generate_stats_list():
             'type': 'top_wasteful_vendor',
             'title': 'Biggest Waste Vendor',
             'value': vendor['vendor'],
-            'subtitle': f"${vendor['total']:.2f} wasted ({vendor['count']} purchases)",
+            # Second line of the value, so the amount matches the vendor's
+            # size rather than shrinking into the subtitle.
+            'value_extra': f"${vendor['total']:.2f}",
+            'subtitle': f"wasted over {vendor['count']} purchases",
             'wasted_text': f"${vendor['total']:.2f}",
             'data': vendor
         })

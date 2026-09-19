@@ -1,5 +1,6 @@
 import sys
 import os
+import html
 import logging
 
 # Set Qt plugin path for macOS
@@ -36,6 +37,7 @@ class MoneyGuiltWidget(QWidget):
         self.resize_start_pos = None
         self.corner_threshold = 30
         self.ring_percentage = None
+        self._value_lines = []
         self.init_ui()
         self.setup_timers()
 
@@ -387,11 +389,20 @@ class MoneyGuiltWidget(QWidget):
 
         self.title_label.setText(stat.get('title', ''))
 
-        # Coloured through the stylesheet rather than as rich text, so the
-        # width measurement in _fitted_value_size still sees plain text.
-        self.value_label.setText(value_text)
-        self.value_label.setStyleSheet(
-            f"color: {WASTED_COLOR};" if wasted_text == value_text else "")
+        # The value can run to a second line so an amount can share the
+        # vendor's size. Lines are kept in plain form for measurement, since
+        # the label's own text is markup once a line is coloured.
+        self._value_lines = [value_text]
+        if stat.get('value_extra'):
+            self._value_lines.append(str(stat['value_extra']))
+
+        rendered = []
+        for line in self._value_lines:
+            safe = html.escape(line)
+            if wasted_text and line == wasted_text:
+                safe = f'<span style="color: {WASTED_COLOR}">{safe}</span>'
+            rendered.append(safe)
+        self.value_label.setText('<br>'.join(rendered))
 
         if wasted_text and wasted_text in subtitle:
             subtitle = subtitle.replace(
@@ -540,32 +551,60 @@ class MoneyGuiltWidget(QWidget):
             self._refresh_metrics()
 
     def _refresh_metrics(self):
-        """Re-fit type and band heights. Order matters: the bands are
-        measured from the scaled fonts, and the ring is sized from the
-        bands."""
+        """Re-fit type and band heights.
+
+        Order matters: the bands are measured from the scaled fonts, and the
+        value is fitted to the space those bands leave over.
+        """
         self.scale_fonts_to_fit()
         self._match_chrome_heights()
-        self._fit_value_inside_ring()
+        self._fit_value()
 
-    def _fit_value_inside_ring(self):
-        """Shrink the value until it sits within the ring's opening."""
+    def _fit_value(self):
+        """Size the value to the space it has.
+
+        Constrained on both axes, because the value can run to two lines and
+        a ring narrows the opening it has to sit in.
+        """
+        lines = [l for l in self._value_lines if l]
+        if not lines:
+            return
+
+        margins = self.layout().contentsMargins()
         ring = self._ring_geometry()
-        if not ring:
-            return
+        if ring:
+            _, _, diameter, stroke = ring
+            width_budget = height_budget = diameter - 2 * stroke - 6
+        else:
+            # Leave a gutter so the text stops short of the rounded edges.
+            width_budget = (self.width() - margins.left() - margins.right()
+                            - 16)
+            band = self.title_label.height()
+            height_budget = (self.height() - margins.top() - margins.bottom()
+                             - 2 * self.layout().spacing() - 2 * band)
 
-        _, _, diameter, stroke = ring
-        available = diameter - 2 * stroke - 6
-        text = self.value_label.text()
-        if available <= 0 or not text:
-            return
+        scale = self.height() / 170.0
+        # The hero size suits a short figure like "$346.98". Names read as
+        # oversized at it, and real ones get long ("Uber 063015 SF**POOL**").
+        if any(c.isalpha() for c in ''.join(lines)):
+            preferred = max(16, int(24 * scale))
+        else:
+            preferred = max(20, int(30 * scale))
 
         font = self.value_label.font()
         probe = QFont(font)
-        for size in range(font.pixelSize(), 9, -1):
+        floor = max(12, int(preferred * 0.5))
+        chosen = floor
+        for size in range(preferred, floor - 1, -1):
             probe.setPixelSize(size)
-            if QFontMetrics(probe).boundingRect(text).width() <= available:
+            metrics = QFontMetrics(probe)
+            widest = max(metrics.boundingRect(l).width() for l in lines)
+            stack = metrics.lineSpacing() * len(lines)
+            if widest <= width_budget and stack <= height_budget:
+                chosen = size
                 break
-        font.setPixelSize(probe.pixelSize())
+
+        font.setPixelSize(chosen)
         self.value_label.setFont(font)
 
     def _match_chrome_heights(self):
@@ -611,25 +650,6 @@ class MoneyGuiltWidget(QWidget):
         region = QRegion(path.toFillPolygon().toPolygon())
         self.setMask(region)
 
-    def _fitted_value_size(self, font, preferred_size):
-        """Largest size at or below preferred_size that keeps the value on one line."""
-        text = self.value_label.text()
-        if not text:
-            return preferred_size
-
-        margins = self.layout().contentsMargins()
-        # Leave a gutter so the text stops short of the rounded edges.
-        available = self.width() - margins.left() - margins.right() - 16
-        if available <= 0:
-            return preferred_size
-
-        probe = QFont(font)
-        floor = max(14, int(preferred_size * 0.5))
-        for size in range(preferred_size, floor - 1, -1):
-            probe.setPixelSize(size)
-            if QFontMetrics(probe).boundingRect(text).width() <= available:
-                return size
-        return floor
 
     def scale_fonts_to_fit(self):
         """Scale fonts dynamically based on widget size.
@@ -642,28 +662,16 @@ class MoneyGuiltWidget(QWidget):
         widget_height = self.height()
         scale_factor = widget_height / 170.0  # 170 is the default height
 
-        # Scale fonts proportionally
+        # Scale fonts proportionally. The value is sized separately in
+        # _fit_value, once the bands are known.
         title_size = max(9, int(13 * scale_factor))
-        value_size = max(20, int(30 * scale_factor))
         subtitle_size = max(9, int(13 * scale_factor))
         footer_size = max(8, int(10 * scale_factor))
-
-        # The hero size suits a short figure like "$346.98". Names read as
-        # oversized at it, and real ones get long ("Uber 063015 SF**POOL**").
-        if any(c.isalpha() for c in self.value_label.text()):
-            value_size = max(16, int(24 * scale_factor))
 
         # Update title
         title_font = self.title_label.font()
         title_font.setPixelSize(title_size)
         self.title_label.setFont(title_font)
-
-        # Update value. Numbers fit at the full size, but text values like
-        # vacation and vendor names are long enough to reach the edges or
-        # wrap, so step the size down until the line fits the widget.
-        value_font = self.value_label.font()
-        value_font.setPixelSize(self._fitted_value_size(value_font, value_size))
-        self.value_label.setFont(value_font)
 
         # Update subtitle
         subtitle_font = self.subtitle_label.font()
