@@ -74,37 +74,41 @@ class MoneyGuiltWidget(QWidget):
         self.close_button.setVisible(False)  # Hidden by default
         self.close_button.setParent(self)
 
-        # Title label (no extra space)
+        # Title label (minimal space)
         self.title_label = QLabel()
         self.title_label.setObjectName("title_label")
         self.title_label.setAlignment(Qt.AlignCenter)
-        main_layout.addWidget(self.title_label)
+        main_layout.addWidget(self.title_label, 0)
 
-        # Large spacer above value (centers it)
-        main_layout.addStretch(1)
+        # Value label container - gets all available space
+        value_container = QVBoxLayout()
+        value_container.setContentsMargins(0, 0, 0, 0)
+        value_container.setSpacing(0)
+        value_container.addStretch(1)
 
-        # Value label (large)
         self.value_label = QLabel()
         self.value_label.setObjectName("value_label")
         self.value_label.setAlignment(Qt.AlignCenter | Qt.AlignVCenter)
         self.value_label.setWordWrap(True)
-        main_layout.addWidget(self.value_label)
+        from PyQt5.QtWidgets import QSizePolicy
+        self.value_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        value_container.addWidget(self.value_label, 1)
 
-        # Large spacer below value (centers it)
-        main_layout.addStretch(1)
+        value_container.addStretch(1)
+        main_layout.addLayout(value_container, 1)
 
-        # Subtitle label (no extra space)
+        # Subtitle label (minimal space)
         self.subtitle_label = QLabel()
         self.subtitle_label.setObjectName("subtitle_label")
         self.subtitle_label.setAlignment(Qt.AlignCenter)
         self.subtitle_label.setWordWrap(True)
-        main_layout.addWidget(self.subtitle_label)
+        main_layout.addWidget(self.subtitle_label, 0)
 
-        # Chart container (for percentage stats, no extra space)
+        # Chart container (minimal space)
         self.chart_label = QLabel()
         self.chart_label.setObjectName("chart_label")
         self.chart_label.setAlignment(Qt.AlignCenter)
-        main_layout.addWidget(self.chart_label)
+        main_layout.addWidget(self.chart_label, 0)
 
         # Footer with next button
         footer_layout = QHBoxLayout()
