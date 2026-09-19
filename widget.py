@@ -64,11 +64,11 @@ class MoneyGuiltWidget(QWidget):
         # Main layout
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(16, 12, 16, 16)
-        main_layout.setSpacing(0)
+        main_layout.setSpacing(8)
 
         # Header with close button
         header_layout = QHBoxLayout()
-        header_layout.setContentsMargins(0, 0, 0, 8)
+        header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(0)
 
         self.close_button = QPushButton("✕")
@@ -81,43 +81,44 @@ class MoneyGuiltWidget(QWidget):
 
         main_layout.addLayout(header_layout)
 
-        # Content layout - Section 2 (Shape and Size) - 16px content padding per Tahoe spec
-        layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)  # Section 2.1 - 8px spacing for related items
-
-        # Top spacer
-        layout.addStretch()
+        # Top spacer to center content
+        main_layout.addStretch()
 
         # Title label
         self.title_label = QLabel()
         self.title_label.setObjectName("title_label")
         self.title_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.title_label)
+        main_layout.addWidget(self.title_label)
+
+        # Spacer before value
+        main_layout.addStretch()
 
         # Value label (large)
         self.value_label = QLabel()
         self.value_label.setObjectName("value_label")
-        self.value_label.setAlignment(Qt.AlignCenter)
+        self.value_label.setAlignment(Qt.AlignCenter | Qt.AlignVCenter)
         self.value_label.setWordWrap(True)
-        layout.addWidget(self.value_label)
+        main_layout.addWidget(self.value_label)
+
+        # Spacer after value
+        main_layout.addStretch()
 
         # Subtitle label
         self.subtitle_label = QLabel()
         self.subtitle_label.setObjectName("subtitle_label")
         self.subtitle_label.setAlignment(Qt.AlignCenter)
         self.subtitle_label.setWordWrap(True)
-        layout.addWidget(self.subtitle_label)
+        main_layout.addWidget(self.subtitle_label)
 
         # Chart container (for percentage stats)
         self.chart_label = QLabel()
         self.chart_label.setObjectName("chart_label")
         self.chart_label.setAlignment(Qt.AlignCenter)
         self.chart_label.setFixedHeight(40)
-        layout.addWidget(self.chart_label)
+        main_layout.addWidget(self.chart_label)
 
-        # Middle spacer
-        layout.addStretch()
+        # Bottom spacer to center content
+        main_layout.addStretch()
 
         # Footer with next button
         footer_layout = QHBoxLayout()
@@ -139,10 +140,7 @@ class MoneyGuiltWidget(QWidget):
         footer_layout.addWidget(self.next_button)
         footer_layout.addStretch()
 
-        layout.addLayout(footer_layout)
-        layout.addStretch()  # Add stretch at bottom to center main stat
-
-        main_layout.addLayout(layout)
+        main_layout.addLayout(footer_layout)
         self.setLayout(main_layout)
 
         # Apply rounded corners mask
