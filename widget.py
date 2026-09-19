@@ -5,9 +5,9 @@ import logging
 # Set Qt plugin path for macOS
 os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = '/usr/local/lib/python3.14/site-packages/PyQt5/Qt5/plugins'
 
-from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
+from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSystemTrayIcon, QMenu
 from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal, QRect
-from PyQt5.QtGui import QFont, QCursor, QPainter, QPen, QColor, QBrush, QPixmap
+from PyQt5.QtGui import QFont, QCursor, QPainter, QPen, QColor, QBrush, QPixmap, QIcon
 from stats import get_random_stat, get_all_stats
 from datetime import datetime
 
@@ -49,6 +49,9 @@ class MoneyGuiltWidget(QWidget):
         # Load stylesheet
         self.load_stylesheet()
 
+        # Setup system tray icon
+        self.setup_tray_icon()
+
         # Main layout
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(16, 12, 16, 16)
@@ -62,7 +65,7 @@ class MoneyGuiltWidget(QWidget):
         self.close_button = QPushButton("✕")
         self.close_button.setObjectName("close_button")
         self.close_button.setFixedSize(18, 18)
-        self.close_button.clicked.connect(self.close)
+        self.close_button.clicked.connect(self.hide)
         header_layout.addWidget(self.close_button)
         header_layout.addStretch()
 
@@ -162,6 +165,65 @@ class MoneyGuiltWidget(QWidget):
         painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), 24, 24)
 
         super().paintEvent(event)
+
+    def setup_tray_icon(self):
+        """Setup system tray icon for macOS menu bar"""
+        # Create tray icon
+        self.tray_icon = QSystemTrayIcon(self)
+
+        # Create tray menu
+        tray_menu = QMenu()
+
+        # Show/Hide action
+        self.toggle_action = tray_menu.addAction("Hide Widget")
+        self.toggle_action.triggered.connect(self.toggle_widget)
+
+        tray_menu.addSeparator()
+
+        # Quit action
+        quit_action = tray_menu.addAction("Quit Money Guilt")
+        quit_action.triggered.connect(self.quit_app)
+
+        self.tray_icon.setContextMenu(tray_menu)
+
+        # Create a simple icon (using a circle)
+        icon_pixmap = QPixmap(16, 16)
+        icon_pixmap.fill(Qt.transparent)
+        icon_painter = QPainter(icon_pixmap)
+        icon_painter.setRenderHint(QPainter.Antialiasing)
+        icon_painter.setPen(QPen(QColor(255, 255, 255), 2))
+        icon_painter.drawEllipse(2, 2, 12, 12)
+        icon_painter.end()
+
+        self.tray_icon.setIcon(QIcon(icon_pixmap))
+        self.tray_icon.show()
+
+        logger.info("System tray icon created")
+
+    def toggle_widget(self):
+        """Toggle widget visibility"""
+        if self.isVisible():
+            self.hide()
+            self.toggle_action.setText("Show Widget")
+            logger.info("Widget hidden")
+        else:
+            self.show()
+            self.raise_()
+            self.activateWindow()
+            self.toggle_action.setText("Hide Widget")
+            logger.info("Widget shown")
+
+    def quit_app(self):
+        """Quit the application"""
+        logger.info("Quitting application")
+        QApplication.quit()
+
+    def closeEvent(self, event):
+        """Handle close event - hide instead of quit"""
+        self.hide()
+        self.toggle_action.setText("Show Widget")
+        event.ignore()
+        logger.info("Widget closed to tray")
 
     def load_stylesheet(self):
         """Load stylesheet from CSS file"""
