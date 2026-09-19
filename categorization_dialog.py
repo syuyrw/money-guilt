@@ -1,152 +1,209 @@
 """Manual transaction categorization dialog"""
 
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-                             QPushButton, QComboBox, QCheckBox, QListWidget,
-                             QListWidgetItem, QMessageBox)
-from PyQt5.QtCore import Qt, pyqtSignal
+                             QPushButton, QComboBox, QCheckBox, QMessageBox)
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QFont
+from database import get_db
 from categorizer import get_categorizer, CATEGORY_KEYWORDS
 
 
 class CategorizationDialog(QDialog):
-    """Dialog for manually categorizing transactions"""
-
-    category_learned = pyqtSignal(str, str, bool)  # merchant, category, is_wasteful
+    """Dialog for categorizing real transactions from the database"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Categorize Transactions")
-        self.setGeometry(100, 100, 600, 500)
+        self.setGeometry(100, 100, 700, 400)
         self.categorizer = get_categorizer()
-        self.current_merchant = None
+
+        self.transactions = []
+        self.current_index = 0
+        self.categorized_count = 0
+
         self.init_ui()
+        self.load_transactions()
+        self.show_transaction()
 
     def init_ui(self):
         """Initialize UI"""
         layout = QVBoxLayout()
 
-        # Instructions
-        instructions = QLabel("Manually categorize merchants to teach the system:")
-        layout.addWidget(instructions)
+        # Title
+        title = QLabel("Help Train the Categorizer")
+        title_font = QFont()
+        title_font.setPointSize(14)
+        title_font.setBold(True)
+        title.setFont(title_font)
+        layout.addWidget(title)
 
-        # Input area
-        input_layout = QHBoxLayout()
+        # Progress
+        self.progress_label = QLabel()
+        layout.addWidget(self.progress_label)
 
-        # Merchant name input
-        merchant_label = QLabel("Merchant:")
-        self.merchant_input = QComboBox()
-        self.merchant_input.setEditable(True)
-        self.merchant_input.setMinimumWidth(250)
-        self.merchant_input.currentTextChanged.connect(self.on_merchant_changed)
-        input_layout.addWidget(merchant_label)
-        input_layout.addWidget(self.merchant_input)
+        # Transaction details
+        details_layout = QVBoxLayout()
+        details_layout.addWidget(QLabel("Transaction Details:"))
 
-        layout.addLayout(input_layout)
+        # Merchant
+        merchant_layout = QHBoxLayout()
+        merchant_layout.addWidget(QLabel("Merchant:"))
+        self.merchant_label = QLabel()
+        merchant_font = QFont()
+        merchant_font.setBold(True)
+        merchant_font.setPointSize(12)
+        self.merchant_label.setFont(merchant_font)
+        merchant_layout.addWidget(self.merchant_label)
+        merchant_layout.addStretch()
+        details_layout.addLayout(merchant_layout)
 
-        # Category selector
+        # Amount and date
+        amount_date_layout = QHBoxLayout()
+        amount_date_layout.addWidget(QLabel("Amount:"))
+        self.amount_label = QLabel()
+        amount_date_layout.addWidget(self.amount_label)
+        amount_date_layout.addWidget(QLabel("  Date:"))
+        self.date_label = QLabel()
+        amount_date_layout.addWidget(self.date_label)
+        amount_date_layout.addStretch()
+        details_layout.addLayout(amount_date_layout)
+
+        # Description
+        desc_layout = QHBoxLayout()
+        desc_layout.addWidget(QLabel("Description:"))
+        self.desc_label = QLabel()
+        self.desc_label.setWordWrap(True)
+        desc_layout.addWidget(self.desc_label)
+        details_layout.addLayout(desc_layout)
+
+        layout.addLayout(details_layout)
+
+        # Categorization controls
+        controls_layout = QVBoxLayout()
+        controls_layout.addWidget(QLabel("Select Category:"))
+
         category_layout = QHBoxLayout()
-        category_label = QLabel("Category:")
         self.category_combo = QComboBox()
         self.category_combo.addItems(sorted(CATEGORY_KEYWORDS.keys()))
-        category_layout.addWidget(category_label)
         category_layout.addWidget(self.category_combo)
         category_layout.addStretch()
-
-        layout.addLayout(category_layout)
+        controls_layout.addLayout(category_layout)
 
         # Wasteful checkbox
         self.wasteful_checkbox = QCheckBox("Mark as wasteful spending")
-        layout.addWidget(self.wasteful_checkbox)
+        controls_layout.addWidget(self.wasteful_checkbox)
 
-        # Save button
-        save_layout = QHBoxLayout()
-        save_layout.addStretch()
-        save_button = QPushButton("Learn This Merchant")
-        save_button.clicked.connect(self.save_categorization)
-        save_layout.addWidget(save_button)
-        layout.addLayout(save_layout)
+        layout.addLayout(controls_layout)
 
-        # Recent merchants list
-        recent_label = QLabel("Recently Learned:")
-        layout.addWidget(recent_label)
-
-        self.recent_list = QListWidget()
-        self.recent_list.itemClicked.connect(self.on_recent_clicked)
-        layout.addWidget(self.recent_list)
-
-        # Buttons
+        # Action buttons
         button_layout = QHBoxLayout()
+
+        skip_button = QPushButton("Skip")
+        skip_button.clicked.connect(self.skip_transaction)
+        button_layout.addWidget(skip_button)
+
         button_layout.addStretch()
-        close_button = QPushButton("Close")
-        close_button.clicked.connect(self.close)
-        button_layout.addWidget(close_button)
+
+        categorize_button = QPushButton("Categorize & Next")
+        categorize_button.setMinimumWidth(150)
+        categorize_button.clicked.connect(self.categorize_transaction)
+        button_layout.addWidget(categorize_button)
+
+        done_button = QPushButton("Done")
+        done_button.clicked.connect(self.close)
+        button_layout.addWidget(done_button)
 
         layout.addLayout(button_layout)
         self.setLayout(layout)
 
-        # Load recent categorizations
-        self.refresh_recent()
+    def load_transactions(self):
+        """Load all transactions from database"""
+        try:
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT id, name, amount, date, description
+                    FROM transactions
+                    ORDER BY date DESC
+                    LIMIT 100
+                """)
+                self.transactions = cursor.fetchall()
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load transactions: {e}")
+            self.close()
 
-    def on_merchant_changed(self, merchant_name: str):
-        """Update UI when merchant changes"""
-        if not merchant_name:
+    def show_transaction(self):
+        """Display current transaction"""
+        if self.current_index >= len(self.transactions):
+            QMessageBox.information(
+                self, "Complete",
+                f"✓ You categorized {self.categorized_count} transactions!\n\n"
+                "The system is now smarter and will categorize similar "
+                "transactions automatically."
+            )
+            self.close()
             return
 
-        self.current_merchant = merchant_name
+        trans = self.transactions[self.current_index]
+        trans_id, merchant, amount, date, description = trans
 
-        # Suggest category
-        suggestions = self.categorizer.get_category_suggestions(merchant_name, top_n=1)
+        # Update progress
+        self.progress_label.setText(
+            f"Transaction {self.current_index + 1} of {len(self.transactions)} "
+            f"({self.categorized_count} categorized)"
+        )
+
+        # Display transaction details
+        self.merchant_label.setText(merchant)
+        self.amount_label.setText(f"${amount:.2f}")
+        self.date_label.setText(str(date))
+        self.desc_label.setText(description or "(no description)")
+
+        # Get suggestions
+        suggestions = self.categorizer.get_category_suggestions(merchant, top_n=1)
         if suggestions:
             category, score = suggestions[0]
             self.category_combo.setCurrentText(category)
 
         # Check if wasteful
-        is_wasteful = self.categorizer.is_wasteful(merchant_name)
+        is_wasteful = self.categorizer.is_wasteful(merchant)
         self.wasteful_checkbox.setChecked(is_wasteful)
 
-    def save_categorization(self):
-        """Save the manual categorization"""
-        merchant = self.merchant_input.currentText().strip()
-        if not merchant:
-            QMessageBox.warning(self, "Error", "Please enter a merchant name")
+        self.current_transaction = trans
+
+    def categorize_transaction(self):
+        """Categorize current transaction and move to next"""
+        if not hasattr(self, 'current_transaction'):
             return
 
+        trans_id, merchant, amount, date, description = self.current_transaction
         category = self.category_combo.currentText()
         is_wasteful = self.wasteful_checkbox.isChecked()
+
+        # Save to database
+        try:
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE transactions
+                    SET category = ?, is_wasteful = ?
+                    WHERE id = ?
+                """, (category, is_wasteful, trans_id))
+                conn.commit()
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to save: {e}")
+            return
 
         # Learn this categorization
         self.categorizer.learn_merchant_category(merchant, category, is_wasteful)
 
-        # Emit signal
-        self.category_learned.emit(merchant, category, is_wasteful)
+        self.categorized_count += 1
 
-        # Show feedback
-        QMessageBox.information(
-            self, "Learned",
-            f"✓ Learned: {merchant} → {category}\n"
-            f"Wasteful: {'Yes' if is_wasteful else 'No'}"
-        )
+        # Move to next
+        self.current_index += 1
+        self.show_transaction()
 
-        # Clear and refresh
-        self.merchant_input.setCurrentText("")
-        self.refresh_recent()
-
-    def refresh_recent(self):
-        """Refresh list of recently learned merchants"""
-        self.recent_list.clear()
-
-        overrides = self.categorizer.merchant_overrides
-        # Show last 20 learned merchants
-        for merchant, category in list(overrides.items())[-20:]:
-            is_wasteful = self.categorizer.merchant_wasteful.get(merchant, False)
-            text = f"{merchant.title()} → {category}"
-            if is_wasteful:
-                text += " (wasteful)"
-
-            item = QListWidgetItem(text)
-            self.recent_list.addItem(item)
-
-    def on_recent_clicked(self, item: QListWidgetItem):
-        """Load recent merchant when clicked"""
-        text = item.text()
-        merchant = text.split(" → ")[0]
-        self.merchant_input.setCurrentText(merchant)
+    def skip_transaction(self):
+        """Skip current transaction"""
+        self.current_index += 1
+        self.show_transaction()
