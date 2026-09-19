@@ -7,7 +7,7 @@ os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = '/usr/local/lib/python3.14/site-pack
 
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSystemTrayIcon, QMenu
 from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal, QRect, QRectF
-from PyQt5.QtGui import QFont, QCursor, QPainter, QPen, QColor, QBrush, QPixmap, QIcon, QPainterPath, QRegion
+from PyQt5.QtGui import QFont, QFontMetrics, QCursor, QPainter, QPen, QColor, QBrush, QPixmap, QIcon, QPainterPath, QRegion
 from stats import get_random_stat, get_all_stats
 from categorization_dialog import CategorizationDialog
 from datetime import datetime
@@ -313,9 +313,14 @@ class MoneyGuiltWidget(QWidget):
         """Display a specific stat"""
         self.current_stat = stat
 
+        subtitle = stat.get('subtitle', '')
+
         self.title_label.setText(stat.get('title', ''))
         self.value_label.setText(str(stat.get('value', '')))
-        self.subtitle_label.setText(stat.get('subtitle', ''))
+        self.subtitle_label.setText(subtitle)
+        # An empty subtitle would otherwise hold an blank row open under
+        # the value.
+        self.subtitle_label.setVisible(bool(subtitle))
 
         # Scale fonts to fit current widget size
         self.scale_fonts_to_fit()
@@ -334,7 +339,13 @@ class MoneyGuiltWidget(QWidget):
         """Draw a progress bar for percentage stats"""
         scale_factor = self.width() / 340.0  # 340 is reference width
         width = max(100, int(200 * scale_factor))
-        height = max(4, int(8 * scale_factor))
+        bar = max(4, int(6 * scale_factor))
+        # Transparent padding above the bar. The subtitle sits directly on
+        # top of it, and this widget is too short to spend layout spacing on
+        # the gap.
+        gap = max(2, int(4 * scale_factor))
+        height = bar + gap
+        radius = bar / 2
 
         # Create pixmap
         pixmap = QPixmap(width, height)
@@ -342,17 +353,21 @@ class MoneyGuiltWidget(QWidget):
 
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
 
-        # Background (unfilled)
-        painter.fillRect(0, 0, width, height, QColor(255, 255, 255, 30))
+        # Track (unfilled)
+        track = QPainterPath()
+        track.addRoundedRect(QRectF(0, gap, width, bar), radius, radius)
+        painter.fillPath(track, QColor(255, 255, 255, 30))
 
         # Filled portion (wasted percentage)
-        filled_width = int(width * percentage / 100)
-        painter.fillRect(0, 0, filled_width, height, QColor(255, 100, 100))
-
-        # Border
-        painter.setPen(QPen(QColor(255, 255, 255, 50), 1))
-        painter.drawRect(0, 0, width - 1, height - 1)
+        filled_width = width * max(0.0, min(100.0, percentage)) / 100
+        if filled_width > 0:
+            fill = QPainterPath()
+            # Never narrower than the cap, or the rounding collapses.
+            fill.addRoundedRect(
+                QRectF(0, gap, max(filled_width, bar), bar), radius, radius)
+            painter.fillPath(fill, QColor(255, 100, 100))
 
         painter.end()
         self.chart_label.setPixmap(pixmap)
@@ -527,8 +542,34 @@ class MoneyGuiltWidget(QWidget):
         region = QRegion(path.toFillPolygon().toPolygon())
         self.setMask(region)
 
+    def _fitted_value_size(self, font, preferred_size):
+        """Largest size at or below preferred_size that keeps the value on one line."""
+        text = self.value_label.text()
+        if not text:
+            return preferred_size
+
+        margins = self.layout().contentsMargins()
+        # Leave a gutter so the text stops short of the rounded edges.
+        available = self.width() - margins.left() - margins.right() - 16
+        if available <= 0:
+            return preferred_size
+
+        probe = QFont(font)
+        floor = max(14, int(preferred_size * 0.5))
+        for size in range(preferred_size, floor - 1, -1):
+            probe.setPixelSize(size)
+            if QFontMetrics(probe).boundingRect(text).width() <= available:
+                return size
+        return floor
+
     def scale_fonts_to_fit(self):
-        """Scale fonts dynamically based on widget size"""
+        """Scale fonts dynamically based on widget size.
+
+        Sizes are in pixels to match the type scale styles.css used to
+        declare. They have to be set here rather than in the stylesheet: a
+        stylesheet font-size wins over setFont, which would pin every label
+        to one size and make this method do nothing.
+        """
         widget_height = self.height()
         scale_factor = widget_height / 170.0  # 170 is the default height
 
@@ -538,24 +579,31 @@ class MoneyGuiltWidget(QWidget):
         subtitle_size = max(9, int(13 * scale_factor))
         footer_size = max(8, int(10 * scale_factor))
 
+        # The hero size suits a short figure like "$346.98". Names read as
+        # oversized at it, and real ones get long ("Uber 063015 SF**POOL**").
+        if any(c.isalpha() for c in self.value_label.text()):
+            value_size = max(16, int(24 * scale_factor))
+
         # Update title
         title_font = self.title_label.font()
-        title_font.setPointSize(title_size)
+        title_font.setPixelSize(title_size)
         self.title_label.setFont(title_font)
 
-        # Update value
+        # Update value. Numbers fit at the full size, but text values like
+        # vacation and vendor names are long enough to reach the edges or
+        # wrap, so step the size down until the line fits the widget.
         value_font = self.value_label.font()
-        value_font.setPointSize(value_size)
+        value_font.setPixelSize(self._fitted_value_size(value_font, value_size))
         self.value_label.setFont(value_font)
 
         # Update subtitle
         subtitle_font = self.subtitle_label.font()
-        subtitle_font.setPointSize(subtitle_size)
+        subtitle_font.setPixelSize(subtitle_size)
         self.subtitle_label.setFont(subtitle_font)
 
         # Update footer
         footer_font = self.footer_label.font()
-        footer_font.setPointSize(footer_size)
+        footer_font.setPixelSize(footer_size)
         self.footer_label.setFont(footer_font)
 
         # Force layout to recalculate with new font sizes
