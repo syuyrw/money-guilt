@@ -422,6 +422,8 @@ class MoneyGuiltWidget(QWidget):
                 self.resize_corner = None
                 self.resize_start_rect = None
                 self.resize_start_pos = None
+                # Update mask after resize complete
+                self.update_rounded_corners_mask()
             elif not self.is_dragging:
                 # Single click - advance stat
                 self.show_next_stat()
@@ -442,7 +444,9 @@ class MoneyGuiltWidget(QWidget):
     def resizeEvent(self, event):
         """Handle resize event - update rounded corners mask"""
         super().resizeEvent(event)
-        self.update_rounded_corners_mask()
+        # Only update mask if not actively resizing from corners
+        if not self.resize_corner:
+            self.update_rounded_corners_mask()
 
     def update_rounded_corners_mask(self):
         """Update the rounded corners mask based on current size"""
