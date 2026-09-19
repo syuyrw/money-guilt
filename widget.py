@@ -320,7 +320,7 @@ class MoneyGuiltWidget(QWidget):
 
     def draw_progress_bar(self, percentage):
         """Draw a progress bar for percentage stats"""
-        scale_factor = self.width() / 449.0  # 449 is default width
+        scale_factor = self.width() / 340.0  # 340 is reference width
         width = max(100, int(200 * scale_factor))
         height = max(4, int(8 * scale_factor))
 
@@ -510,7 +510,6 @@ class MoneyGuiltWidget(QWidget):
 
         # Force layout to recalculate with new font sizes
         self.layout().invalidate()
-        self.adjustSize()
         self.update()
 
 
