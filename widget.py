@@ -53,7 +53,7 @@ class MoneyGuiltWidget(QWidget):
 
         # Set resizable size with minimum constraints
         self.setMinimumSize(QSize(280, 140))
-        self.resize(QSize(374, 170))
+        self.resize(QSize(449, 170))
 
         # Load stylesheet
         self.load_stylesheet()
@@ -320,7 +320,7 @@ class MoneyGuiltWidget(QWidget):
 
     def draw_progress_bar(self, percentage):
         """Draw a progress bar for percentage stats"""
-        scale_factor = self.width() / 374.0  # 374 is default width
+        scale_factor = self.width() / 449.0  # 449 is default width
         width = max(100, int(200 * scale_factor))
         height = max(4, int(8 * scale_factor))
 
@@ -526,7 +526,7 @@ def main():
     screen_geom = screen.geometry()
 
     # Top-right corner with padding
-    x = screen_geom.width() - 394  # 374 widget width + 20px padding
+    x = screen_geom.width() - 469  # 449 widget width + 20px padding
     y = 20
 
     logger.info(f"Screen: {screen.name()}, Geometry: {screen_geom.width()}x{screen_geom.height()}")
