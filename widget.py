@@ -61,10 +61,11 @@ class MoneyGuiltWidget(QWidget):
         # Setup system tray icon
         self.setup_tray_icon()
 
-        # Main layout
+        # Main layout. Top and bottom margins must match, or the content
+        # area's midpoint won't line up with the widget's midpoint.
         main_layout = QVBoxLayout()
-        main_layout.setContentsMargins(16, 12, 16, 16)
-        main_layout.setSpacing(8)
+        main_layout.setContentsMargins(16, 10, 16, 10)
+        main_layout.setSpacing(4)
 
         # Close button (not in layout, positioned absolutely)
         self.close_button = QPushButton("✕")
@@ -74,41 +75,51 @@ class MoneyGuiltWidget(QWidget):
         self.close_button.setVisible(False)  # Hidden by default
         self.close_button.setParent(self)
 
-        # Title label (minimal space)
+        # Centering is a symmetry problem: the value only lands on the
+        # widget's centerline if the band above it is the same height as the
+        # band below it. The bottom band (subtitle + chart + footer) is the
+        # taller one, so the title row is grown to match it by
+        # _match_chrome_heights(); the title text stays pinned to the top of
+        # that row. The interior in between then splits evenly around the
+        # value.
+
+        # Title row (top band) - height synced to the bottom band
         self.title_label = QLabel()
         self.title_label.setObjectName("title_label")
-        self.title_label.setAlignment(Qt.AlignCenter)
+        self.title_label.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
         main_layout.addWidget(self.title_label, 0)
 
-        # Value label container - gets all available space
-        value_container = QVBoxLayout()
-        value_container.setContentsMargins(0, 0, 0, 0)
-        value_container.setSpacing(0)
-        value_container.addStretch(1)
+        # Interior: equal stretches on either side of the value
+        interior = QVBoxLayout()
+        interior.setContentsMargins(0, 0, 0, 0)
+        interior.setSpacing(0)
+
+        interior.addStretch(1)
 
         self.value_label = QLabel()
         self.value_label.setObjectName("value_label")
-        self.value_label.setAlignment(Qt.AlignCenter | Qt.AlignVCenter)
+        self.value_label.setAlignment(Qt.AlignCenter)
         self.value_label.setWordWrap(True)
-        from PyQt5.QtWidgets import QSizePolicy
-        self.value_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        value_container.addWidget(self.value_label, 1)
+        interior.addWidget(self.value_label, 0)
 
-        value_container.addStretch(1)
-        main_layout.addLayout(value_container, 1)
+        interior.addStretch(1)
+        main_layout.addLayout(interior, 1)
 
-        # Subtitle label (minimal space)
+        # Bottom band: subtitle, chart, then the footer pinned to the bottom
+        self.bottom_band = QVBoxLayout()
+        self.bottom_band.setContentsMargins(0, 0, 0, 0)
+        self.bottom_band.setSpacing(4)
+
         self.subtitle_label = QLabel()
         self.subtitle_label.setObjectName("subtitle_label")
         self.subtitle_label.setAlignment(Qt.AlignCenter)
         self.subtitle_label.setWordWrap(True)
-        main_layout.addWidget(self.subtitle_label, 0)
+        self.bottom_band.addWidget(self.subtitle_label, 0)
 
-        # Chart container (minimal space)
         self.chart_label = QLabel()
         self.chart_label.setObjectName("chart_label")
         self.chart_label.setAlignment(Qt.AlignCenter)
-        main_layout.addWidget(self.chart_label, 0)
+        self.bottom_band.addWidget(self.chart_label, 0)
 
         # Footer with next button
         footer_layout = QHBoxLayout()
@@ -130,7 +141,9 @@ class MoneyGuiltWidget(QWidget):
         footer_layout.addWidget(self.next_button)
         footer_layout.addStretch()
 
-        main_layout.addLayout(footer_layout)
+        self.bottom_band.addLayout(footer_layout)
+
+        main_layout.addLayout(self.bottom_band, 0)
         self.setLayout(main_layout)
 
         # Apply rounded corners mask
@@ -315,6 +328,8 @@ class MoneyGuiltWidget(QWidget):
         else:
             self.chart_label.hide()
 
+        self._match_chrome_heights()
+
     def draw_progress_bar(self, percentage):
         """Draw a progress bar for percentage stats"""
         scale_factor = self.width() / 340.0  # 340 is reference width
@@ -467,6 +482,43 @@ class MoneyGuiltWidget(QWidget):
         if not self.resize_corner:
             self.update_rounded_corners_mask()
             self.scale_fonts_to_fit()
+            self._match_chrome_heights()
+
+    def _match_chrome_heights(self):
+        """Grow the title row to match the bottom band so the value centers.
+
+        The value sits between two equal stretches, so it is centered within
+        the interior. The interior is only centered in the widget when the
+        bands above and below it are the same height.
+        """
+        margins = self.layout().contentsMargins()
+        inner_width = self.width() - margins.left() - margins.right()
+
+        def row_height(label):
+            # A wrapping label's sizeHint assumes a width of its own choosing,
+            # so ask what it actually needs at the width it will be given.
+            if label.wordWrap() and inner_width > 0:
+                wrapped = label.heightForWidth(inner_width)
+                if wrapped > 0:
+                    return wrapped
+            return label.sizeHint().height()
+
+        # Measured from the visible rows only - the layout's own sizeHint
+        # still counts the chart label while it is hidden.
+        rows = []
+        if not self.subtitle_label.isHidden():
+            rows.append(row_height(self.subtitle_label))
+        if not self.chart_label.isHidden():
+            rows.append(row_height(self.chart_label))
+        rows.append(max(self.footer_label.sizeHint().height(),
+                        self.next_button.height()))
+
+        bottom_height = sum(rows) + self.bottom_band.spacing() * (len(rows) - 1)
+
+        # Font metrics, not sizeHint: once a fixed height is set, sizeHint
+        # reports that height back and the row could then only ever grow.
+        natural_title = self.title_label.fontMetrics().height()
+        self.title_label.setFixedHeight(max(natural_title, bottom_height))
 
     def update_rounded_corners_mask(self):
         """Update the rounded corners mask based on current size"""
