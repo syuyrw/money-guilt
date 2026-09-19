@@ -83,11 +83,13 @@ class MoneyGuiltWidget(QWidget):
         # around the value.
 
         # Title row (top band) - height synced to the bottom band. The title
-        # is centered in that band rather than pinned to its top edge, which
-        # left the title stranded above a gap.
+        # sits at the bottom of that band so the padding collects above it,
+        # at the widget's top edge. Centering the title inside the band
+        # instead splits that padding and pushes half of it between the title
+        # and the value, which is what made the value look low.
         self.title_label = QLabel()
         self.title_label.setObjectName("title_label")
-        self.title_label.setAlignment(Qt.AlignCenter)
+        self.title_label.setAlignment(Qt.AlignHCenter | Qt.AlignBottom)
         main_layout.addWidget(self.title_label, 0)
 
         # Interior: equal stretches on either side of the value
@@ -109,7 +111,7 @@ class MoneyGuiltWidget(QWidget):
         # Bottom band: subtitle, chart, then the footer pinned to the bottom
         self.bottom_band = QVBoxLayout()
         self.bottom_band.setContentsMargins(0, 0, 0, 0)
-        self.bottom_band.setSpacing(4)
+        self.bottom_band.setSpacing(3)
 
         self.subtitle_label = QLabel()
         self.subtitle_label.setObjectName("subtitle_label")
@@ -137,7 +139,7 @@ class MoneyGuiltWidget(QWidget):
         # Next stat button
         self.next_button = QPushButton("→")
         self.next_button.setObjectName("next_button")
-        self.next_button.setFixedSize(20, 20)
+        self.next_button.setFixedSize(16, 16)
         self.next_button.clicked.connect(self.show_next_stat)
         footer_layout.addWidget(self.next_button)
         footer_layout.addStretch()
@@ -340,11 +342,11 @@ class MoneyGuiltWidget(QWidget):
         """Draw a progress bar for percentage stats"""
         scale_factor = self.width() / 340.0  # 340 is reference width
         width = max(100, int(200 * scale_factor))
-        bar = max(4, int(6 * scale_factor))
+        bar = max(4, int(5 * scale_factor))
         # Transparent padding above the bar. The subtitle sits directly on
         # top of it, and this widget is too short to spend layout spacing on
         # the gap.
-        gap = max(2, int(4 * scale_factor))
+        gap = max(2, int(3 * scale_factor))
         height = bar + gap
         radius = bar / 2
 
