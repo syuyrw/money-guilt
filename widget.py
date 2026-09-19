@@ -30,7 +30,7 @@ class MoneyGuiltWidget(QWidget):
         self.resize_corner = None
         self.resize_start_rect = None
         self.resize_start_pos = None
-        self.corner_threshold = 12
+        self.corner_threshold = 30
         self.init_ui()
         self.setup_timers()
 
@@ -407,8 +407,9 @@ class MoneyGuiltWidget(QWidget):
             self.move(event.globalPos() - self.drag_position)
             self.is_dragging = True
             event.accept()
-        else:
-            # Update cursor based on corner proximity
+
+        # Always update cursor based on corner proximity (for hover effect)
+        if not self.resize_corner and event.buttons() == Qt.NoButton:
             corner = self.get_corner_at_pos(event.pos())
             if corner:
                 self.setCursor(QCursor(self.get_resize_cursor(corner)))
