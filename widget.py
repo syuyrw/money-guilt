@@ -186,13 +186,15 @@ class MoneyGuiltWidget(QWidget):
 
         self.tray_icon.setContextMenu(tray_menu)
 
-        # Create a simple icon (using a circle)
+        # Create icon with $ symbol
         icon_pixmap = QPixmap(16, 16)
         icon_pixmap.fill(Qt.transparent)
         icon_painter = QPainter(icon_pixmap)
         icon_painter.setRenderHint(QPainter.Antialiasing)
-        icon_painter.setPen(QPen(QColor(255, 255, 255), 2))
-        icon_painter.drawEllipse(2, 2, 12, 12)
+        font = QFont("Arial", 11, QFont.Bold)
+        icon_painter.setFont(font)
+        icon_painter.setPen(QColor(255, 255, 255))
+        icon_painter.drawText(icon_pixmap.rect(), Qt.AlignCenter, "$")
         icon_painter.end()
 
         self.tray_icon.setIcon(QIcon(icon_pixmap))
