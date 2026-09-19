@@ -314,6 +314,9 @@ class MoneyGuiltWidget(QWidget):
         self.value_label.setText(str(stat.get('value', '')))
         self.subtitle_label.setText(stat.get('subtitle', ''))
 
+        # Scale fonts to fit current widget size
+        self.scale_fonts_to_fit()
+
         # Show chart for percentage stats
         if stat.get('type') == 'wasted_percentage':
             percentage = stat.get('data', {}).get('percentage', 0)
@@ -466,11 +469,12 @@ class MoneyGuiltWidget(QWidget):
         super().leaveEvent(event)
 
     def resizeEvent(self, event):
-        """Handle resize event - update rounded corners mask"""
+        """Handle resize event - update rounded corners mask and scale fonts"""
         super().resizeEvent(event)
         # Only update mask if not actively resizing from corners
         if not self.resize_corner:
             self.update_rounded_corners_mask()
+            self.scale_fonts_to_fit()
 
     def update_rounded_corners_mask(self):
         """Update the rounded corners mask based on current size"""
@@ -478,6 +482,37 @@ class MoneyGuiltWidget(QWidget):
         path.addRoundedRect(QRectF(self.rect()), 24, 24)
         region = QRegion(path.toFillPolygon().toPolygon())
         self.setMask(region)
+
+    def scale_fonts_to_fit(self):
+        """Scale fonts dynamically based on widget size"""
+        widget_height = self.height()
+        scale_factor = widget_height / 188.0  # 188 is the default height
+
+        # Scale fonts proportionally
+        title_size = max(9, int(13 * scale_factor))
+        value_size = max(20, int(30 * scale_factor))
+        subtitle_size = max(9, int(13 * scale_factor))
+        footer_size = max(8, int(10 * scale_factor))
+
+        # Update title
+        title_font = self.title_label.font()
+        title_font.setPointSize(title_size)
+        self.title_label.setFont(title_font)
+
+        # Update value
+        value_font = self.value_label.font()
+        value_font.setPointSize(value_size)
+        self.value_label.setFont(value_font)
+
+        # Update subtitle
+        subtitle_font = self.subtitle_label.font()
+        subtitle_font.setPointSize(subtitle_size)
+        self.subtitle_label.setFont(subtitle_font)
+
+        # Update footer
+        footer_font = self.footer_label.font()
+        footer_font.setPointSize(footer_size)
+        self.footer_label.setFont(footer_font)
 
 
 def main():
