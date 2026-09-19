@@ -360,13 +360,10 @@ class MoneyGuiltWidget(QWidget):
 
     def get_resize_cursor(self, corner):
         """Get the appropriate cursor for the corner"""
-        cursors = {
-            "top-left": Qt.SizeFDiagCursor,
-            "top-right": Qt.SizeBDiagCursor,
-            "bottom-left": Qt.SizeBDiagCursor,
-            "bottom-right": Qt.SizeFDiagCursor,
-        }
-        return cursors.get(corner, Qt.ArrowCursor)
+        # Hand cursor for all corners
+        if corner:
+            return Qt.OpenHandCursor
+        return Qt.ArrowCursor
 
     def mousePressEvent(self, event):
         """Handle mouse press"""
