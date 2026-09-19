@@ -53,7 +53,7 @@ class MoneyGuiltWidget(QWidget):
 
         # Set resizable size with minimum constraints
         self.setMinimumSize(QSize(280, 140))
-        self.resize(QSize(449, 170))
+        self.resize(QSize(350, 170))
 
         # Load stylesheet
         self.load_stylesheet()
@@ -66,20 +66,13 @@ class MoneyGuiltWidget(QWidget):
         main_layout.setContentsMargins(16, 12, 16, 16)
         main_layout.setSpacing(8)
 
-        # Header with close button
-        header_layout = QHBoxLayout()
-        header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setSpacing(0)
-
+        # Close button (not in layout, positioned absolutely)
         self.close_button = QPushButton("✕")
         self.close_button.setObjectName("close_button")
         self.close_button.setFixedSize(18, 18)
         self.close_button.clicked.connect(self.hide)
         self.close_button.setVisible(False)  # Hidden by default
-        header_layout.addWidget(self.close_button)
-        header_layout.addStretch()
-
-        main_layout.addLayout(header_layout)
+        self.close_button.setParent(self)
 
         # Title label (no extra space)
         self.title_label = QLabel()
@@ -455,6 +448,7 @@ class MoneyGuiltWidget(QWidget):
     def enterEvent(self, event):
         """Show close button on mouse enter"""
         self.close_button.setVisible(True)
+        self.close_button.move(16, 12)
         super().enterEvent(event)
 
     def leaveEvent(self, event):
@@ -525,7 +519,7 @@ def main():
     screen_geom = screen.geometry()
 
     # Top-right corner with padding
-    x = screen_geom.width() - 469  # 449 widget width + 20px padding
+    x = screen_geom.width() - 370  # 350 widget width + 20px padding
     y = 20
 
     logger.info(f"Screen: {screen.name()}, Geometry: {screen_geom.width()}x{screen_geom.height()}")
