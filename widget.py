@@ -51,9 +51,9 @@ class MoneyGuiltWidget(QWidget):
         # Enable mouse tracking for hover effects
         self.setMouseTracking(True)
 
-        # Set resizable size with minimum constraints (25% smaller)
-        self.setMinimumSize(QSize(210, 150))
-        self.resize(QSize(300, 188))
+        # Set resizable size with minimum constraints
+        self.setMinimumSize(QSize(280, 140))
+        self.resize(QSize(340, 170))
 
         # Load stylesheet
         self.load_stylesheet()
@@ -320,7 +320,7 @@ class MoneyGuiltWidget(QWidget):
 
     def draw_progress_bar(self, percentage):
         """Draw a progress bar for percentage stats"""
-        scale_factor = self.width() / 300.0  # 300 is default width
+        scale_factor = self.width() / 340.0  # 340 is default width
         width = max(100, int(200 * scale_factor))
         height = max(4, int(8 * scale_factor))
 
@@ -480,7 +480,7 @@ class MoneyGuiltWidget(QWidget):
     def scale_fonts_to_fit(self):
         """Scale fonts dynamically based on widget size"""
         widget_height = self.height()
-        scale_factor = widget_height / 188.0  # 188 is the default height
+        scale_factor = widget_height / 170.0  # 170 is the default height
 
         # Scale fonts proportionally
         title_size = max(9, int(13 * scale_factor))
