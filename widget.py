@@ -51,9 +51,9 @@ class MoneyGuiltWidget(QWidget):
         # Enable mouse tracking for hover effects
         self.setMouseTracking(True)
 
-        # Set resizable size with minimum constraints
-        self.setMinimumSize(QSize(280, 200))
-        self.resize(QSize(400, 250))
+        # Set resizable size with minimum constraints (25% smaller)
+        self.setMinimumSize(QSize(210, 150))
+        self.resize(QSize(300, 188))
 
         # Load stylesheet
         self.load_stylesheet()
