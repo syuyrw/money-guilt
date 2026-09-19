@@ -133,7 +133,7 @@ def generate_stats_list():
             'type': 'wasted_year',
             'title': 'Total Wasted This Year',
             'value': f"${wasted['year']:.2f}",
-            'subtitle': 'Money spent on wasteful purchases',
+            'subtitle': '',
             'data': {'amount': wasted['year']}
         })
 
