@@ -5,7 +5,7 @@ import logging
 # Set Qt plugin path for macOS
 os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = '/usr/local/lib/python3.14/site-packages/PyQt5/Qt5/plugins'
 
-from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSystemTrayIcon, QMenu, QSizeGrip
+from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSystemTrayIcon, QMenu
 from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal, QRect
 from PyQt5.QtGui import QFont, QCursor, QPainter, QPen, QColor, QBrush, QPixmap, QIcon
 from stats import get_random_stat, get_all_stats
@@ -27,6 +27,10 @@ class MoneyGuiltWidget(QWidget):
         self.current_stat_index = 0
         self.drag_position = None
         self.is_dragging = False
+        self.resize_corner = None
+        self.resize_start_rect = None
+        self.resize_start_pos = None
+        self.corner_threshold = 12
         self.init_ui()
         self.setup_timers()
 
@@ -129,11 +133,6 @@ class MoneyGuiltWidget(QWidget):
         self.next_button.clicked.connect(self.show_next_stat)
         footer_layout.addWidget(self.next_button)
         footer_layout.addStretch()
-
-        # Size grip for resizing
-        size_grip = QSizeGrip(self)
-        size_grip.setStyleSheet("QSizeGrip { width: 16px; height: 16px; }")
-        footer_layout.addWidget(size_grip)
 
         layout.addLayout(footer_layout)
 
@@ -335,24 +334,92 @@ class MoneyGuiltWidget(QWidget):
         now = datetime.now().strftime("%I:%M %p")
         self.footer_label.setText(f"Last updated: {now}")
 
+    def get_corner_at_pos(self, pos):
+        """Determine which corner the position is near"""
+        x, y = pos.x(), pos.y()
+        w, h = self.width(), self.height()
+        t = self.corner_threshold
+
+        # Top-left
+        if x < t and y < t:
+            return "top-left"
+        # Top-right
+        if x > w - t and y < t:
+            return "top-right"
+        # Bottom-left
+        if x < t and y > h - t:
+            return "bottom-left"
+        # Bottom-right
+        if x > w - t and y > h - t:
+            return "bottom-right"
+
+        return None
+
+    def get_resize_cursor(self, corner):
+        """Get the appropriate cursor for the corner"""
+        cursors = {
+            "top-left": Qt.SizeFDiagCursor,
+            "top-right": Qt.SizeBDiagCursor,
+            "bottom-left": Qt.SizeBDiagCursor,
+            "bottom-right": Qt.SizeFDiagCursor,
+        }
+        return cursors.get(corner, Qt.ArrowCursor)
+
     def mousePressEvent(self, event):
         """Handle mouse press"""
         if event.button() == Qt.LeftButton:
-            self.drag_position = event.globalPos() - self.frameGeometry().topLeft()
-            self.is_dragging = False
+            corner = self.get_corner_at_pos(event.pos())
+            if corner:
+                self.resize_corner = corner
+                self.resize_start_rect = self.geometry()
+                self.resize_start_pos = event.globalPos()
+            else:
+                self.drag_position = event.globalPos() - self.frameGeometry().topLeft()
+                self.is_dragging = False
             event.accept()
 
     def mouseMoveEvent(self, event):
-        """Move window while dragging"""
-        if event.buttons() == Qt.LeftButton and self.drag_position is not None:
+        """Handle mouse move for resizing or dragging"""
+        if self.resize_corner:
+            # Resizing
+            delta = event.globalPos() - self.resize_start_pos
+            new_rect = QRect(self.resize_start_rect)
+
+            if "top" in self.resize_corner:
+                new_rect.setTop(self.resize_start_rect.top() + delta.y())
+            if "bottom" in self.resize_corner:
+                new_rect.setBottom(self.resize_start_rect.bottom() + delta.y())
+            if "left" in self.resize_corner:
+                new_rect.setLeft(self.resize_start_rect.left() + delta.x())
+            if "right" in self.resize_corner:
+                new_rect.setRight(self.resize_start_rect.right() + delta.x())
+
+            # Apply minimum size
+            if new_rect.width() >= self.minimumWidth() and new_rect.height() >= self.minimumHeight():
+                self.setGeometry(new_rect)
+
+            event.accept()
+        elif event.buttons() == Qt.LeftButton and self.drag_position is not None:
+            # Dragging
             self.move(event.globalPos() - self.drag_position)
             self.is_dragging = True
             event.accept()
+        else:
+            # Update cursor based on corner proximity
+            corner = self.get_corner_at_pos(event.pos())
+            if corner:
+                self.setCursor(QCursor(self.get_resize_cursor(corner)))
+            else:
+                self.setCursor(QCursor(Qt.ArrowCursor))
 
     def mouseReleaseEvent(self, event):
-        """End dragging"""
+        """End dragging or resizing"""
         if event.button() == Qt.LeftButton:
-            if not self.is_dragging:
+            if self.resize_corner:
+                self.resize_corner = None
+                self.resize_start_rect = None
+                self.resize_start_pos = None
+            elif not self.is_dragging:
                 # Single click - advance stat
                 self.show_next_stat()
             self.drag_position = None
