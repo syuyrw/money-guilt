@@ -79,14 +79,15 @@ class MoneyGuiltWidget(QWidget):
         # widget's centerline if the band above it is the same height as the
         # band below it. The bottom band (subtitle + chart + footer) is the
         # taller one, so the title row is grown to match it by
-        # _match_chrome_heights(); the title text stays pinned to the top of
-        # that row. The interior in between then splits evenly around the
-        # value.
+        # _match_chrome_heights(). The interior in between then splits evenly
+        # around the value.
 
-        # Title row (top band) - height synced to the bottom band
+        # Title row (top band) - height synced to the bottom band. The title
+        # is centered in that band rather than pinned to its top edge, which
+        # left the title stranded above a gap.
         self.title_label = QLabel()
         self.title_label.setObjectName("title_label")
-        self.title_label.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
+        self.title_label.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(self.title_label, 0)
 
         # Interior: equal stretches on either side of the value
