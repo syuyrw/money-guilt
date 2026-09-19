@@ -207,12 +207,14 @@ class MoneyGuiltWidget(QWidget):
         if self.isVisible():
             self.hide()
             self.toggle_action.setText("Show Widget")
+            self.tray_icon.setContextMenu(self.tray_icon.contextMenu())
             logger.info("Widget hidden")
         else:
             self.show()
             self.raise_()
             self.activateWindow()
             self.toggle_action.setText("Hide Widget")
+            self.tray_icon.setContextMenu(self.tray_icon.contextMenu())
             logger.info("Widget shown")
 
     def quit_app(self):
