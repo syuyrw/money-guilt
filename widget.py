@@ -140,6 +140,7 @@ class MoneyGuiltWidget(QWidget):
         footer_layout.addStretch()
 
         layout.addLayout(footer_layout)
+        layout.addStretch()  # Add stretch at bottom to center main stat
 
         main_layout.addLayout(layout)
         self.setLayout(main_layout)
