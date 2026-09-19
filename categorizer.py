@@ -7,7 +7,7 @@ from typing import Dict, List, Tuple, Optional
 
 # Category keywords - maps merchant keywords to spending categories
 CATEGORY_KEYWORDS = {
-    "food": [
+    "eating out": [
         "restaurant", "cafe", "coffee", "pizza", "burger", "taco", "sushi",
         "doordash", "uber eats", "grubhub", "postmates", "diner", "grill",
         "bistro", "bakery", "smoothie", "juice", "starbucks", "mcdonalds",
@@ -206,14 +206,14 @@ class TransactionCategorizer:
             # High-discretionary categories
             wasteful_categories = {
                 "entertainment": 0.8,  # 80% of entertainment is wasteful
-                "food": 0.5,  # 50% of food (delivery, fast food)
+                "eating out": 0.5,  # 50% of eating out (delivery, fast food)
                 "subscriptions": 0.9,  # 90% of subscriptions are wasteful
                 "shopping": 0.4,  # 40% of shopping is impulse
             }
 
             if category in wasteful_categories:
                 # Check specific merchants
-                if category == "food":
+                if category == "eating out":
                     if any(k in merchant_lower for k in ["delivery", "ubereats", "doordash", "grubhub"]):
                         return True
                 elif category == "entertainment":
@@ -243,13 +243,13 @@ class TransactionCategorizer:
     def _amount_based_category(self, amount: float) -> Dict[str, float]:
         """Guess category based on amount"""
         scores = {}
-        # Cheap purchases likely groceries or food
+        # Cheap purchases likely groceries or eating out
         if amount < 20:
-            scores["food"] = 1.0
+            scores["eating out"] = 1.0
             scores["groceries"] = 1.0
-        # Mid-range could be food or shopping
+        # Mid-range could be eating out or shopping
         elif amount < 100:
-            scores["food"] = 0.5
+            scores["eating out"] = 0.5
             scores["shopping"] = 0.5
         # Large purchases likely shopping or utilities
         elif amount > 100:
