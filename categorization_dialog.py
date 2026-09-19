@@ -68,14 +68,6 @@ class CategorizationDialog(QDialog):
         amount_date_layout.addStretch()
         details_layout.addLayout(amount_date_layout)
 
-        # Description
-        desc_layout = QHBoxLayout()
-        desc_layout.addWidget(QLabel("Description:"))
-        self.desc_label = QLabel()
-        self.desc_label.setWordWrap(True)
-        desc_layout.addWidget(self.desc_label)
-        details_layout.addLayout(desc_layout)
-
         layout.addLayout(details_layout)
 
         # Categorization controls
@@ -122,7 +114,7 @@ class CategorizationDialog(QDialog):
             with get_db() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    SELECT id, name, amount, date, description
+                    SELECT id, name, amount, date
                     FROM transactions
                     ORDER BY date DESC
                     LIMIT 100
@@ -145,7 +137,10 @@ class CategorizationDialog(QDialog):
             return
 
         trans = self.transactions[self.current_index]
-        trans_id, merchant, amount, date, description = trans
+        trans_id = trans[0]
+        merchant = trans[1]
+        amount = trans[2]
+        date = trans[3]
 
         # Update progress
         self.progress_label.setText(
@@ -157,7 +152,6 @@ class CategorizationDialog(QDialog):
         self.merchant_label.setText(merchant)
         self.amount_label.setText(f"${amount:.2f}")
         self.date_label.setText(str(date))
-        self.desc_label.setText(description or "(no description)")
 
         # Get suggestions
         suggestions = self.categorizer.get_category_suggestions(merchant, top_n=1)
@@ -169,14 +163,14 @@ class CategorizationDialog(QDialog):
         is_wasteful = self.categorizer.is_wasteful(merchant)
         self.wasteful_checkbox.setChecked(is_wasteful)
 
-        self.current_transaction = trans
+        self.current_transaction = (trans_id, merchant, amount, date)
 
     def categorize_transaction(self):
         """Categorize current transaction and move to next"""
         if not hasattr(self, 'current_transaction'):
             return
 
-        trans_id, merchant, amount, date, description = self.current_transaction
+        trans_id, merchant, amount, date = self.current_transaction
         category = self.category_combo.currentText()
         is_wasteful = self.wasteful_checkbox.isChecked()
 
