@@ -66,3 +66,22 @@ QLabel:focus {
     font-weight: 400;
     line-height: 13px;
 }
+
+#next_button {
+    background-color: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.4);
+    font-size: 12px;
+    font-weight: 400;
+    padding: 0px;
+    border-radius: 4px;
+}
+
+#next_button:hover {
+    background-color: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.6);
+}
+
+#next_button:pressed {
+    background-color: rgba(255, 255, 255, 0.12);
+}

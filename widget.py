@@ -5,7 +5,7 @@ import logging
 # Set Qt plugin path for macOS
 os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = '/usr/local/lib/python3.14/site-packages/PyQt5/Qt5/plugins'
 
-from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel
+from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
 from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal, QRect
 from PyQt5.QtGui import QFont, QCursor, QPainter, QPen, QColor, QBrush, QPixmap
 from stats import get_random_stat, get_all_stats
@@ -87,11 +87,27 @@ class MoneyGuiltWidget(QWidget):
         # Middle spacer
         layout.addStretch()
 
+        # Footer with next button
+        footer_layout = QHBoxLayout()
+        footer_layout.setContentsMargins(0, 0, 0, 0)
+        footer_layout.setSpacing(8)
+
         # Footer (last updated)
         self.footer_label = QLabel()
         self.footer_label.setObjectName("footer_label")
         self.footer_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.footer_label)
+        footer_layout.addStretch()
+        footer_layout.addWidget(self.footer_label)
+
+        # Next stat button
+        self.next_button = QPushButton("→")
+        self.next_button.setObjectName("next_button")
+        self.next_button.setFixedSize(20, 20)
+        self.next_button.clicked.connect(self.show_next_stat)
+        footer_layout.addWidget(self.next_button)
+        footer_layout.addStretch()
+
+        layout.addLayout(footer_layout)
 
         self.setLayout(layout)
 
