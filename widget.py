@@ -6,8 +6,8 @@ import logging
 os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = '/usr/local/lib/python3.14/site-packages/PyQt5/Qt5/plugins'
 
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel
-from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal
-from PyQt5.QtGui import QFont, QCursor, QPainter, QPen, QColor, QBrush
+from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal, QRect
+from PyQt5.QtGui import QFont, QCursor, QPainter, QPen, QColor, QBrush, QPixmap
 from stats import get_random_stat, get_all_stats
 from datetime import datetime
 
@@ -76,6 +76,13 @@ class MoneyGuiltWidget(QWidget):
         self.subtitle_label.setAlignment(Qt.AlignCenter)
         self.subtitle_label.setWordWrap(True)
         layout.addWidget(self.subtitle_label)
+
+        # Chart container (for percentage stats)
+        self.chart_label = QLabel()
+        self.chart_label.setObjectName("chart_label")
+        self.chart_label.setAlignment(Qt.AlignCenter)
+        self.chart_label.setFixedHeight(40)
+        layout.addWidget(self.chart_label)
 
         # Middle spacer
         layout.addStretch()
@@ -180,6 +187,40 @@ class MoneyGuiltWidget(QWidget):
         self.title_label.setText(stat.get('title', ''))
         self.value_label.setText(str(stat.get('value', '')))
         self.subtitle_label.setText(stat.get('subtitle', ''))
+
+        # Show chart for percentage stats
+        if stat.get('type') == 'wasted_percentage':
+            percentage = stat.get('data', {}).get('percentage', 0)
+            self.draw_progress_bar(percentage)
+            self.chart_label.show()
+        else:
+            self.chart_label.hide()
+
+    def draw_progress_bar(self, percentage):
+        """Draw a progress bar for percentage stats"""
+        width = 200
+        height = 8
+
+        # Create pixmap
+        pixmap = QPixmap(width, height)
+        pixmap.fill(Qt.transparent)
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # Background (unfilled)
+        painter.fillRect(0, 0, width, height, QColor(255, 255, 255, 30))
+
+        # Filled portion (wasted percentage)
+        filled_width = int(width * percentage / 100)
+        painter.fillRect(0, 0, filled_width, height, QColor(255, 100, 100))
+
+        # Border
+        painter.setPen(QPen(QColor(255, 255, 255, 50), 1))
+        painter.drawRect(0, 0, width - 1, height - 1)
+
+        painter.end()
+        self.chart_label.setPixmap(pixmap)
 
     def update_footer(self):
         """Update the footer timestamp"""
