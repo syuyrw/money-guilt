@@ -75,6 +75,7 @@ class MoneyGuiltWidget(QWidget):
         self.close_button.setObjectName("close_button")
         self.close_button.setFixedSize(18, 18)
         self.close_button.clicked.connect(self.hide)
+        self.close_button.setVisible(False)  # Hidden by default
         header_layout.addWidget(self.close_button)
         header_layout.addStretch()
 
@@ -454,6 +455,16 @@ class MoneyGuiltWidget(QWidget):
             self.show_next_stat()
             self.is_dragging = False
             event.accept()
+
+    def enterEvent(self, event):
+        """Show close button on mouse enter"""
+        self.close_button.setVisible(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        """Hide close button on mouse leave"""
+        self.close_button.setVisible(False)
+        super().leaveEvent(event)
 
     def resizeEvent(self, event):
         """Handle resize event - update rounded corners mask"""
