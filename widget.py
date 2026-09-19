@@ -187,13 +187,13 @@ class MoneyGuiltWidget(QWidget):
         self.tray_icon.setContextMenu(tray_menu)
 
         # Create icon with $ symbol
-        icon_pixmap = QPixmap(16, 16)
+        icon_pixmap = QPixmap(22, 22)
         icon_pixmap.fill(Qt.transparent)
         icon_painter = QPainter(icon_pixmap)
         icon_painter.setRenderHint(QPainter.Antialiasing)
-        font = QFont("Arial", 11, QFont.Bold)
+        font = QFont("Arial", 16, QFont.Bold)
         icon_painter.setFont(font)
-        icon_painter.setPen(QColor(255, 255, 255))
+        icon_painter.setPen(QColor(0, 0, 0))
         icon_painter.drawText(icon_pixmap.rect(), Qt.AlignCenter, "$")
         icon_painter.end()
 
