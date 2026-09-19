@@ -49,9 +49,28 @@ class MoneyGuiltWidget(QWidget):
         # Load stylesheet
         self.load_stylesheet()
 
-        # Layout - Section 2 (Shape and Size) - 16px content padding per Tahoe spec
+        # Main layout
+        main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(16, 12, 16, 16)
+        main_layout.setSpacing(0)
+
+        # Header with close button
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 8)
+        header_layout.setSpacing(0)
+
+        self.close_button = QPushButton("✕")
+        self.close_button.setObjectName("close_button")
+        self.close_button.setFixedSize(18, 18)
+        self.close_button.clicked.connect(self.close)
+        header_layout.addWidget(self.close_button)
+        header_layout.addStretch()
+
+        main_layout.addLayout(header_layout)
+
+        # Content layout - Section 2 (Shape and Size) - 16px content padding per Tahoe spec
         layout = QVBoxLayout()
-        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)  # Section 2.1 - 8px spacing for related items
 
         # Top spacer
@@ -109,7 +128,8 @@ class MoneyGuiltWidget(QWidget):
 
         layout.addLayout(footer_layout)
 
-        self.setLayout(layout)
+        main_layout.addLayout(layout)
+        self.setLayout(main_layout)
 
         # Load all stats
         self.load_stats()
