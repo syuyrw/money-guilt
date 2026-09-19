@@ -32,6 +32,7 @@ class MoneyGuiltWidget(QWidget):
         self.resize_start_rect = None
         self.resize_start_pos = None
         self.corner_threshold = 30
+        self.ring_percentage = None
         self.init_ui()
         self.setup_timers()
 
@@ -182,7 +183,58 @@ class MoneyGuiltWidget(QWidget):
         rect = self.rect()
         painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), 24, 24)
 
+        self._draw_ring(painter)
+
         super().paintEvent(event)
+
+    def _ring_geometry(self):
+        """Circle for the percentage ring, or None when no ring is shown.
+
+        The ring occupies the interior between the two bands instead of
+        taking a row of its own. A row would push the bottom band down, and
+        the top band mirrors it to keep the value centered, so every pixel
+        of chart would cost two - at this widget's height that caps a
+        charted row at about 15px, too small to read as a chart.
+        """
+        if self.ring_percentage is None:
+            return None
+
+        margins = self.layout().contentsMargins()
+        band = self.title_label.height()
+        interior = (self.height() - margins.top() - margins.bottom()
+                    - 2 * self.layout().spacing() - 2 * band)
+
+        diameter = min(interior, int(self.width() * 0.45))
+        if diameter < 24:
+            return None
+
+        stroke = max(4, round(diameter / 12))
+        return self.width() / 2, self.height() / 2, diameter, stroke
+
+    def _draw_ring(self, painter):
+        """Draw the donut chart behind the value."""
+        ring = self._ring_geometry()
+        if not ring:
+            return
+
+        cx, cy, diameter, stroke = ring
+        # drawArc strokes centred on the path, so inset by half the width.
+        box = QRectF(cx - diameter / 2 + stroke / 2,
+                     cy - diameter / 2 + stroke / 2,
+                     diameter - stroke, diameter - stroke)
+
+        pen = QPen(QColor(255, 255, 255, 38), stroke, Qt.SolidLine, Qt.FlatCap)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawArc(box, 0, 360 * 16)
+
+        pct = max(0.0, min(100.0, self.ring_percentage))
+        if pct > 0:
+            pen.setColor(QColor(255, 100, 100))
+            pen.setCapStyle(Qt.RoundCap)
+            painter.setPen(pen)
+            # Clockwise from twelve o'clock; Qt angles run counter-clockwise.
+            painter.drawArc(box, 90 * 16, -int(360 * 16 * pct / 100))
 
     def setup_tray_icon(self):
         """Setup system tray icon for macOS menu bar"""
@@ -318,62 +370,30 @@ class MoneyGuiltWidget(QWidget):
 
         subtitle = stat.get('subtitle', '')
 
+        value_text = str(stat.get('value', ''))
+        if stat.get('type') == 'wasted_percentage':
+            # Inside a ring titled "Percent of Spending Wasted" the sign is
+            # redundant, and dropping it buys the figure a larger size in a
+            # tight opening.
+            value_text = value_text.rstrip('%')
+
         self.title_label.setText(stat.get('title', ''))
-        self.value_label.setText(str(stat.get('value', '')))
+        self.value_label.setText(value_text)
         self.subtitle_label.setText(subtitle)
         # An empty subtitle would otherwise hold an blank row open under
         # the value.
         self.subtitle_label.setVisible(bool(subtitle))
 
-        # Scale fonts to fit current widget size
-        self.scale_fonts_to_fit()
-
-        # Show chart for percentage stats
+        # The percentage stat draws a ring around the value instead of
+        # filling a chart row.
         if stat.get('type') == 'wasted_percentage':
-            percentage = stat.get('data', {}).get('percentage', 0)
-            self.draw_progress_bar(percentage)
-            self.chart_label.show()
+            self.ring_percentage = stat.get('data', {}).get('percentage', 0)
         else:
-            self.chart_label.hide()
+            self.ring_percentage = None
+        self.chart_label.hide()
 
-        self._match_chrome_heights()
+        self._refresh_metrics()
 
-    def draw_progress_bar(self, percentage):
-        """Draw a progress bar for percentage stats"""
-        scale_factor = self.width() / 340.0  # 340 is reference width
-        width = max(100, int(200 * scale_factor))
-        bar = max(4, int(5 * scale_factor))
-        # Transparent padding above the bar. The subtitle sits directly on
-        # top of it, and this widget is too short to spend layout spacing on
-        # the gap.
-        gap = max(2, int(3 * scale_factor))
-        height = bar + gap
-        radius = bar / 2
-
-        # Create pixmap
-        pixmap = QPixmap(width, height)
-        pixmap.fill(Qt.transparent)
-
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.setPen(Qt.NoPen)
-
-        # Track (unfilled)
-        track = QPainterPath()
-        track.addRoundedRect(QRectF(0, gap, width, bar), radius, radius)
-        painter.fillPath(track, QColor(255, 255, 255, 30))
-
-        # Filled portion (wasted percentage)
-        filled_width = width * max(0.0, min(100.0, percentage)) / 100
-        if filled_width > 0:
-            fill = QPainterPath()
-            # Never narrower than the cap, or the rounding collapses.
-            fill.addRoundedRect(
-                QRectF(0, gap, max(filled_width, bar), bar), radius, radius)
-            painter.fillPath(fill, QColor(255, 100, 100))
-
-        painter.end()
-        self.chart_label.setPixmap(pixmap)
 
     def update_footer(self):
         """Update the footer timestamp"""
@@ -499,8 +519,36 @@ class MoneyGuiltWidget(QWidget):
         # Only update mask if not actively resizing from corners
         if not self.resize_corner:
             self.update_rounded_corners_mask()
-            self.scale_fonts_to_fit()
-            self._match_chrome_heights()
+            self._refresh_metrics()
+
+    def _refresh_metrics(self):
+        """Re-fit type and band heights. Order matters: the bands are
+        measured from the scaled fonts, and the ring is sized from the
+        bands."""
+        self.scale_fonts_to_fit()
+        self._match_chrome_heights()
+        self._fit_value_inside_ring()
+
+    def _fit_value_inside_ring(self):
+        """Shrink the value until it sits within the ring's opening."""
+        ring = self._ring_geometry()
+        if not ring:
+            return
+
+        _, _, diameter, stroke = ring
+        available = diameter - 2 * stroke - 6
+        text = self.value_label.text()
+        if available <= 0 or not text:
+            return
+
+        font = self.value_label.font()
+        probe = QFont(font)
+        for size in range(font.pixelSize(), 9, -1):
+            probe.setPixelSize(size)
+            if QFontMetrics(probe).boundingRect(text).width() <= available:
+                break
+        font.setPixelSize(probe.pixelSize())
+        self.value_label.setFont(font)
 
     def _match_chrome_heights(self):
         """Grow the title row to match the bottom band so the value centers.
