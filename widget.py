@@ -6,8 +6,8 @@ import logging
 os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = '/usr/local/lib/python3.14/site-packages/PyQt5/Qt5/plugins'
 
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSystemTrayIcon, QMenu
-from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal, QRect
-from PyQt5.QtGui import QFont, QCursor, QPainter, QPen, QColor, QBrush, QPixmap, QIcon
+from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal, QRect, QRectF
+from PyQt5.QtGui import QFont, QCursor, QPainter, QPen, QColor, QBrush, QPixmap, QIcon, QPainterPath, QRegion
 from stats import get_random_stat, get_all_stats
 from datetime import datetime
 
@@ -138,6 +138,9 @@ class MoneyGuiltWidget(QWidget):
 
         main_layout.addLayout(layout)
         self.setLayout(main_layout)
+
+        # Apply rounded corners mask
+        self.update_rounded_corners_mask()
 
         # Load all stats
         self.load_stats()
@@ -435,6 +438,18 @@ class MoneyGuiltWidget(QWidget):
             self.show_next_stat()
             self.is_dragging = False
             event.accept()
+
+    def resizeEvent(self, event):
+        """Handle resize event - update rounded corners mask"""
+        super().resizeEvent(event)
+        self.update_rounded_corners_mask()
+
+    def update_rounded_corners_mask(self):
+        """Update the rounded corners mask based on current size"""
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(self.rect()), 24, 24)
+        region = QRegion(path.toFillPolygon().toPolygon())
+        self.setMask(region)
 
 
 def main():
