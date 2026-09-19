@@ -91,8 +91,18 @@ class MoneyGuiltWidget(QWidget):
         # Load all stats
         self.load_stats()
 
-        # Show initial stat
-        self.show_next_stat()
+        # Show random initial stat
+        if self.stats:
+            stat = get_random_stat()
+        else:
+            stat = {
+                'type': 'no_data',
+                'title': 'No Data',
+                'value': 'No wasteful spending tracked',
+                'subtitle': 'Mark transactions as wasteful to see stats',
+            }
+        self.display_stat(stat)
+        self.update_footer()
 
     def paintEvent(self, event):
         """Draw white border and rounded corners"""
