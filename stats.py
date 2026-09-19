@@ -175,9 +175,13 @@ def generate_stats_list():
     # Stat 5: Vacation suggestion
     if wasted['year'] > 0:
         vacation = get_vacation_suggestion(wasted['year'])
+        # "European" opens with a "yoo" sound, so it takes "a" despite the
+        # leading vowel.
+        name = vacation['name'].lower()
+        article = 'an' if name[0] in 'aeiou' and not name.startswith('eu') else 'a'
         stats.append({
             'type': 'vacation_idea',
-            'title': 'Dream Vacation You Could Afford',
+            'title': f"You could have afforded {article}",
             'value': vacation['name'],
             'subtitle': f"Instead of wasting ${wasted['year']:.2f} this year",
             'data': {'cost': vacation['cost'], 'wasted': wasted['year']}
