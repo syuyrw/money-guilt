@@ -43,11 +43,11 @@ QLabel:focus {
 /* Section 3.3 - WIDGET HERO NUMBER (Value) */
 #value_label {
     color: rgba(255, 255, 255, 0.85);
-    font-size: 40px;
+    font-size: 30px;
     font-weight: 600;
     margin: 8px 0px;
     font-variant-numeric: tabular-nums;
-    line-height: 48px;
+    line-height: 36px;
 }
 
 /* Section 4.1 - SECONDARY TEXT (Subtitle) */
