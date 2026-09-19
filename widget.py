@@ -111,7 +111,6 @@ class MoneyGuiltWidget(QWidget):
         self.chart_label = QLabel()
         self.chart_label.setObjectName("chart_label")
         self.chart_label.setAlignment(Qt.AlignCenter)
-        self.chart_label.setFixedHeight(40)
         main_layout.addWidget(self.chart_label)
 
         # Footer with next button
@@ -321,8 +320,9 @@ class MoneyGuiltWidget(QWidget):
 
     def draw_progress_bar(self, percentage):
         """Draw a progress bar for percentage stats"""
-        width = 200
-        height = 8
+        scale_factor = self.width() / 300.0  # 300 is default width
+        width = max(100, int(200 * scale_factor))
+        height = max(4, int(8 * scale_factor))
 
         # Create pixmap
         pixmap = QPixmap(width, height)
@@ -507,6 +507,11 @@ class MoneyGuiltWidget(QWidget):
         footer_font = self.footer_label.font()
         footer_font.setPointSize(footer_size)
         self.footer_label.setFont(footer_font)
+
+        # Force layout to recalculate with new font sizes
+        self.layout().invalidate()
+        self.adjustSize()
+        self.update()
 
 
 def main():
