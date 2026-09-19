@@ -47,6 +47,9 @@ class MoneyGuiltWidget(QWidget):
         # Note: Removed WA_TranslucentBackground as it was making widget invisible
         # The CSS provides the semi-transparent effect
 
+        # Enable mouse tracking for hover effects
+        self.setMouseTracking(True)
+
         # Set resizable size with minimum constraints
         self.setMinimumSize(QSize(280, 200))
         self.resize(QSize(400, 250))
