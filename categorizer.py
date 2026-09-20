@@ -80,24 +80,34 @@ class TransactionCategorizer:
 
         # Learned merchant overrides from user manual categorizations
         self.overrides_file = overrides_file
-        self.merchant_overrides: Dict[str, str] = self._load_overrides()
-        self.merchant_wasteful: Dict[str, bool] = {}
+        self.merchant_overrides, self.merchant_wasteful = self._load_overrides()
 
-    def _load_overrides(self) -> Dict[str, str]:
-        """Load merchant overrides from file"""
+    def _load_overrides(self) -> Tuple[Dict[str, str], Dict[str, bool]]:
+        """Load learned categories and wasteful flags from file."""
         if os.path.exists(self.overrides_file):
             try:
                 with open(self.overrides_file, 'r') as f:
-                    return json.load(f)
+                    data = json.load(f)
             except Exception as e:
                 print(f"Error loading overrides: {e}")
-        return {}
+                return {}, {}
+
+            if isinstance(data.get('categories'), dict):
+                return data['categories'], data.get('wasteful', {})
+
+            # Files written before wasteful flags were persisted held a bare
+            # {merchant: category} map. Carry those categories over.
+            if isinstance(data, dict):
+                return data, {}
+
+        return {}, {}
 
     def _save_overrides(self):
-        """Save merchant overrides to file"""
+        """Save learned categories and wasteful flags to file."""
         try:
             with open(self.overrides_file, 'w') as f:
-                json.dump(self.merchant_overrides, f, indent=2)
+                json.dump({'categories': self.merchant_overrides,
+                           'wasteful': self.merchant_wasteful}, f, indent=2)
         except Exception as e:
             print(f"Error saving overrides: {e}")
 
@@ -183,11 +193,13 @@ class TransactionCategorizer:
         if merchant_lower in self.merchant_wasteful:
             return self.merchant_wasteful[merchant_lower]
 
-        # Check partial merchant match
-        for learned_merchant, is_wasteful in self.merchant_wasteful.items():
+        # Check partial merchant match. Returns the flag as taught, including
+        # a False: otherwise "Netflix" taught as not wasteful would fall
+        # through to the rules below, which call every subscription wasteful
+        # and would overrule the lesson for "Netflix.com Subscription".
+        for learned_merchant, flag in self.merchant_wasteful.items():
             if learned_merchant in merchant_lower or merchant_lower in learned_merchant:
-                if is_wasteful:
-                    return True
+                return flag
 
         # Check wasteful keywords
         text_to_match = merchant_lower
@@ -251,8 +263,9 @@ class TransactionCategorizer:
         elif amount < 100:
             scores["eating out"] = 0.5
             scores["shopping"] = 0.5
-        # Large purchases likely shopping or utilities
-        elif amount > 100:
+        # Large purchases likely shopping or utilities. Not "> 100", which
+        # leaves a charge of exactly 100 matching no branch at all.
+        else:
             scores["shopping"] = 0.5
             scores["utilities"] = 0.3
         return scores
