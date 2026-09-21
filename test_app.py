@@ -1,0 +1,637 @@
+"""Test suite for Money Guilt.
+
+Run with:  python test_app.py
+
+Everything runs against a throwaway database and throwaway overrides
+files in a temp directory. The real money_guilt.db and
+merchant_overrides.json are never opened, so this is safe to run at any
+time. Exits non-zero if anything fails.
+"""
+import os
+import sys
+import json
+import shutil
+import tempfile
+import traceback
+from datetime import datetime, timedelta
+from types import SimpleNamespace
+
+# Must be set before PyQt is imported, so the widget tests need no display.
+os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+
+PROJECT = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, PROJECT)
+os.chdir(PROJECT)
+
+import database
+
+SANDBOX = None
+PASSED, FAILED = [], []
+
+
+def check(name, fn):
+    try:
+        fn()
+        PASSED.append(name)
+    except Exception as exc:
+        FAILED.append((name, f"{type(exc).__name__}: {exc}",
+                       traceback.format_exc()))
+
+
+def eq(actual, expected, msg=''):
+    assert actual == expected, f"expected {expected!r}, got {actual!r} {msg}"
+
+
+def sandbox_path(name):
+    return os.path.join(SANDBOX, name)
+
+
+def day(offset):
+    return (datetime.now() + timedelta(days=offset)).strftime('%Y-%m-%d')
+
+
+def fake_tx(tid, name, amount, days_ago, primary='FOOD', detailed='FOOD_FAST'):
+    """Stands in for a Plaid transaction object."""
+    return SimpleNamespace(
+        transaction_id=tid, account_id='acct1', date=day(-days_ago),
+        name=name, amount=amount,
+        personal_finance_category=SimpleNamespace(
+            primary=primary, detailed=detailed))
+
+
+def fake_account(aid, name, balance):
+    return SimpleNamespace(account_id=aid, name=name, type='depository',
+                           subtype='checking',
+                           balances=SimpleNamespace(current=balance))
+
+
+# --------------------------------------------------------------- database
+def seed_database():
+    database.init_db()
+    database.save_accounts([fake_account('acct1', 'Checking', 1500.0)])
+    database.save_transactions([
+        fake_tx('t1', 'Starbucks', 6.50, 2),
+        fake_tx('t2', 'Whole Foods', 82.10, 5),
+        fake_tx('t3', 'Netflix', 15.99, 20),
+        fake_tx('t4', 'Shell Gas', 45.00, 100),
+        fake_tx('t5', 'Payroll Deposit', -2000.0, 3),
+        fake_tx('t6', 'Starbucks', 7.25, 400),
+    ])
+
+
+def table_names():
+    with database.get_db() as conn:
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name NOT LIKE 'sqlite_%'").fetchall()
+    return sorted(r['name'] for r in rows)
+
+
+def t_db_init():
+    seed_database()
+    eq(table_names(), ['accounts', 'categories', 'transactions'])
+
+
+def t_db_accounts():
+    rows = database.get_accounts()
+    eq(len(rows), 1)
+    eq(rows[0]['name'], 'Checking')
+    eq(rows[0]['balance'], 1500.0)
+
+
+def t_db_no_duplicates():
+    before = len(database.get_all_transactions(days=9999))
+    database.save_transactions([fake_tx('t1', 'Starbucks', 6.50, 2)])
+    eq(len(database.get_all_transactions(days=9999)), before,
+       "re-saving the same id must not duplicate")
+
+
+def t_db_day_window():
+    ids = {r['id'] for r in database.get_all_transactions(days=7)}
+    assert 't1' in ids and 't2' in ids, ids
+    assert 't3' not in ids, "a 20-day-old row leaked into the 7-day window"
+    assert 't6' not in ids, "a 400-day-old row leaked into the 7-day window"
+
+
+def t_db_by_category():
+    rows = database.get_transactions_by_category(days=9999)
+    assert any(r['category_primary'] == 'FOOD' for r in rows), rows
+
+
+def t_db_mark_wasteful():
+    database.mark_transaction_wasteful('t1', 1)
+    database.mark_transaction_wasteful('t3', 1)
+    spend = database.get_wasteful_spending(days=30)
+    eq(round(spend['total'], 2), 22.49)
+    eq(spend['count'], 2)
+
+
+def t_db_empty_window():
+    spend = database.get_wasteful_spending(days=1)
+    eq(spend['total'], 0, "an empty window must total 0, not None")
+    eq(spend['count'], 0)
+
+
+def t_db_excludes_income():
+    # 6.50 + 82.10 + 15.99 + 45.00 + 7.25; the -2000 payroll is excluded
+    eq(round(database.get_total_spending(days=9999), 2), 156.84)
+
+
+def t_db_unknown_id():
+    database.mark_transaction_wasteful('does-not-exist', 1)  # must not raise
+
+
+DATABASE_TESTS = [
+    ("db: init_db creates the three tables", t_db_init),
+    ("db: save_accounts / get_accounts", t_db_accounts),
+    ("db: re-saving a transaction id does not duplicate", t_db_no_duplicates),
+    ("db: get_all_transactions honours the day window", t_db_day_window),
+    ("db: get_transactions_by_category groups", t_db_by_category),
+    ("db: mark_transaction_wasteful + get_wasteful_spending", t_db_mark_wasteful),
+    ("db: wasteful spending over an empty window returns 0", t_db_empty_window),
+    ("db: get_total_spending excludes income", t_db_excludes_income),
+    ("db: marking an unknown id is a no-op", t_db_unknown_id),
+]
+
+
+# ------------------------------------------------------------- categorizer
+def fresh_categorizer():
+    import categorizer
+    return categorizer.TransactionCategorizer(
+        overrides_file=sandbox_path(f'ov_{os.urandom(4).hex()}.json'))
+
+
+def t_cat_keywords():
+    c = fresh_categorizer()
+    eq(c.categorize('Starbucks Coffee'), 'eating out')
+    eq(c.categorize('Whole Foods Market'), 'groceries')
+    eq(c.categorize('Netflix'), 'entertainment')
+    eq(c.categorize('Shell'), 'transportation')
+
+
+def t_cat_empty_input():
+    c = fresh_categorizer()
+    eq(c.categorize(''), 'other')
+    eq(c.categorize(None), 'other')
+    eq(c.is_wasteful(''), False)
+    eq(c.is_wasteful(None), False)
+
+
+def t_cat_category_persists():
+    import categorizer
+    path = sandbox_path('persist_category.json')
+    first = categorizer.TransactionCategorizer(overrides_file=path)
+    first.learn_merchant_category('Blue Bottle', 'eating out', True)
+    second = categorizer.TransactionCategorizer(overrides_file=path)
+    eq(second.categorize('Blue Bottle'), 'eating out')
+
+
+def t_cat_wasteful_persists():
+    """Regression: the flag used to live only in memory."""
+    import categorizer
+    path = sandbox_path('persist_wasteful.json')
+    first = categorizer.TransactionCategorizer(overrides_file=path)
+    first.learn_merchant_category('Cigar Shop', 'shopping', True)
+    second = categorizer.TransactionCategorizer(overrides_file=path)
+    eq(second.is_wasteful('Cigar Shop'), True,
+       "a wasteful flag must survive a restart")
+
+
+def t_cat_legacy_file_migrates():
+    """Regression: files predating wasteful flags must not lose data."""
+    import categorizer
+    path = sandbox_path('legacy.json')
+    with open(path, 'w') as fh:
+        json.dump({"uber 063015 sf**pool**": "transportation",
+                   "united airlines": "transportation"}, fh)
+
+    first = categorizer.TransactionCategorizer(overrides_file=path)
+    eq(first.categorize('Uber 063015 SF**POOL**'), 'transportation')
+    eq(first.categorize('United Airlines'), 'transportation')
+
+    first.learn_merchant_category('Dunkin', 'eating out', True)
+    second = categorizer.TransactionCategorizer(overrides_file=path)
+    eq(second.categorize('United Airlines'), 'transportation',
+       "the pre-existing entry must survive the format change")
+    eq(second.categorize('Dunkin'), 'eating out')
+    eq(second.is_wasteful('Dunkin'), True)
+
+
+def t_cat_partial_match():
+    c = fresh_categorizer()
+    c.learn_merchant_category('Starbucks', 'eating out')
+    eq(c.categorize('Starbucks Downtown #4471'), 'eating out')
+
+
+def t_cat_override_beats_keyword():
+    c = fresh_categorizer()
+    c.learn_merchant_category('Netflix', 'subscriptions')
+    eq(c.categorize('Netflix'), 'subscriptions')
+
+
+def t_cat_not_wasteful_respected():
+    c = fresh_categorizer()
+    c.learn_merchant_category('Netflix', 'entertainment', False)
+    eq(c.is_wasteful('Netflix'), False)
+
+
+def t_cat_partial_honours_not_wasteful():
+    """Regression: the partial-match path used to ignore a stored False."""
+    c = fresh_categorizer()
+    c.learn_merchant_category('Netflix', 'subscriptions', False)
+    eq(c.is_wasteful('Netflix.com Subscription'), False,
+       "a partial match must honour a not-wasteful lesson")
+
+
+def t_cat_partial_propagates_wasteful():
+    c = fresh_categorizer()
+    c.learn_merchant_category('Starbucks', 'eating out', True)
+    eq(c.is_wasteful('Starbucks Downtown #4471'), True)
+
+
+def t_cat_exactly_one_hundred():
+    """Regression: 100.00 matched neither "< 100" nor "> 100"."""
+    c = fresh_categorizer()
+    assert c.categorize('Zzz Unknown Merchant', amount=100.0) != 'other'
+
+
+def t_cat_amount_fallback():
+    c = fresh_categorizer()
+    for amount in (19.0, 50.0, 100.0, 150.0):
+        got = c.categorize('Zzz Unknown Merchant', amount=amount)
+        assert got != 'other', (amount, got)
+
+
+def t_cat_corrupt_file():
+    import categorizer
+    path = sandbox_path('corrupt.json')
+    with open(path, 'w') as fh:
+        fh.write('{not json')
+    c = categorizer.TransactionCategorizer(overrides_file=path)
+    eq(c.categorize('Starbucks'), 'eating out')
+
+
+def t_cat_suggestions():
+    c = fresh_categorizer()
+    ranked = c.get_category_suggestions('Starbucks Coffee', top_n=3)
+    assert ranked and ranked[0][0] == 'eating out', ranked
+
+
+def t_cat_word_boundary():
+    c = fresh_categorizer()
+    # "gas" appears in both the transportation and utilities keyword lists
+    assert c.categorize('Chevron Gas Station') in ('transportation', 'utilities')
+
+
+CATEGORIZER_TESTS = [
+    ("cat: keyword matching", t_cat_keywords),
+    ("cat: empty / None merchant", t_cat_empty_input),
+    ("cat: learned category persists across instances", t_cat_category_persists),
+    ("cat: learned WASTEFUL flag persists across instances", t_cat_wasteful_persists),
+    ("cat: legacy flat overrides file is migrated, not lost", t_cat_legacy_file_migrates),
+    ("cat: partial merchant match", t_cat_partial_match),
+    ("cat: learned override beats keyword", t_cat_override_beats_keyword),
+    ("cat: explicitly-taught not-wasteful is respected", t_cat_not_wasteful_respected),
+    ("cat: partial match honours a not-wasteful lesson", t_cat_partial_honours_not_wasteful),
+    ("cat: partial match propagates a wasteful lesson", t_cat_partial_propagates_wasteful),
+    ("cat: a charge of exactly $100 still categorises", t_cat_exactly_one_hundred),
+    ("cat: amount-based fallback covers all amounts", t_cat_amount_fallback),
+    ("cat: corrupt overrides file degrades gracefully", t_cat_corrupt_file),
+    ("cat: get_category_suggestions ranks", t_cat_suggestions),
+    ("cat: word-boundary scoring", t_cat_word_boundary),
+]
+
+
+# ------------------------------------------------------------------ stats
+def t_stats_periods():
+    periods = __import__('stats').get_wasted_by_period()
+    assert periods['week'] <= periods['month'] <= periods['year'], periods
+
+
+def t_stats_percentage_range():
+    data = __import__('stats').get_wasteful_percentage()
+    assert 0 <= data['percentage'] <= 100, data
+
+
+def t_stats_top_vendor_shape():
+    vendor = __import__('stats').get_top_wasteful_vendor()
+    assert vendor is None or {'vendor', 'count', 'total'} <= set(vendor), vendor
+
+
+def t_stats_vacation_affordable():
+    vacation = __import__('stats').get_vacation_suggestion(3000)
+    assert vacation['cost'] <= 3000, vacation
+
+
+def t_stats_vacation_broke():
+    stats = __import__('stats')
+    cheapest = min(v['cost'] for v in stats.VACATION_IDEAS)
+    eq(stats.get_vacation_suggestion(1)['cost'], cheapest)
+
+
+def t_stats_required_keys():
+    for stat in __import__('stats').generate_stats_list():
+        for key in ('type', 'title', 'value', 'subtitle'):
+            assert key in stat, (stat.get('type'), key)
+
+
+def t_stats_wasted_text_verbatim():
+    """wasted_text must appear exactly, or the red highlight never applies."""
+    for stat in __import__('stats').generate_stats_list():
+        marker = stat.get('wasted_text')
+        if not marker:
+            continue
+        haystack = (f"{stat['value']} {stat.get('value_extra', '')} "
+                    f"{stat['subtitle']}")
+        assert marker in haystack, (stat['type'], marker, haystack)
+
+
+def t_stats_percentage_not_reddened():
+    """That stat's figure is total spending, so it must not be marked."""
+    for stat in __import__('stats').generate_stats_list():
+        if stat['type'] == 'wasted_percentage':
+            assert 'wasted_text' not in stat
+
+
+def t_stats_no_data():
+    eq(__import__('stats').get_no_data_stat()['type'], 'no_data')
+
+
+def t_stats_random():
+    assert __import__('stats').get_random_stat()['type']
+
+
+def t_stats_empty_database():
+    """Every stat path must survive a database with no rows."""
+    stats = __import__('stats')
+    original = database.DATABASE_PATH
+    database.DATABASE_PATH = sandbox_path('empty.db')
+    try:
+        database.init_db()
+        listed = stats.generate_stats_list()
+        eq(len(listed), 1)
+        eq(listed[0]['type'], 'no_data')
+        stats.get_random_stat()
+        eq(stats.get_wasteful_percentage()['percentage'], 0)
+        eq(stats.get_top_wasteful_vendor(), None)
+    finally:
+        database.DATABASE_PATH = original
+
+
+STATS_TESTS = [
+    ("stats: week <= month <= year", t_stats_periods),
+    ("stats: percentage within 0-100", t_stats_percentage_range),
+    ("stats: top vendor shape", t_stats_top_vendor_shape),
+    ("stats: vacation within budget", t_stats_vacation_affordable),
+    ("stats: vacation falls back to cheapest", t_stats_vacation_broke),
+    ("stats: every stat has the required keys", t_stats_required_keys),
+    ("stats: wasted_text appears verbatim in its stat", t_stats_wasted_text_verbatim),
+    ("stats: percentage stat carries no wasted_text", t_stats_percentage_not_reddened),
+    ("stats: no_data fallback", t_stats_no_data),
+    ("stats: get_random_stat", t_stats_random),
+    ("stats: empty database yields no_data, no crash", t_stats_empty_database),
+]
+
+
+# ----------------------------------------------------------------- widget
+WIDGET = None
+QT_APP = None
+EVERY_STAT = []
+
+
+def show(stat):
+    WIDGET.display_stat(stat)
+    WIDGET.layout().activate()
+    QT_APP.processEvents()
+
+
+def t_widget_renders_every_stat():
+    for stat in EVERY_STAT:
+        show(stat)
+        assert WIDGET.value_label.text(), stat['type']
+
+
+def t_widget_value_centred():
+    for size in [(350, 170), (280, 140), (500, 260)]:
+        WIDGET.resize(*size)
+        QT_APP.processEvents()
+        for stat in EVERY_STAT:
+            show(stat)
+            box = WIDGET.value_label.geometry()
+            offset = (box.y() + box.height() / 2) - WIDGET.height() / 2
+            assert abs(offset) <= 3, (size, stat['type'], offset)
+    WIDGET.resize(350, 170)
+    QT_APP.processEvents()
+
+
+def t_widget_no_overflow():
+    for size in [(350, 170), (280, 140)]:
+        WIDGET.resize(*size)
+        QT_APP.processEvents()
+        for stat in EVERY_STAT:
+            show(stat)
+            assert WIDGET.value_label.height() <= WIDGET.height(), stat['type']
+            assert WIDGET.value_label.sizeHint().width() <= WIDGET.width(), \
+                stat['type']
+    WIDGET.resize(350, 170)
+    QT_APP.processEvents()
+
+
+def t_widget_escapes_html():
+    show({'type': 'vacation_idea', 'title': 'x',
+          'value': 'Paris & London <trip>', 'subtitle': '', 'data': {}})
+    text = WIDGET.value_label.text()
+    assert '&amp;' in text and '&lt;trip&gt;' in text, text
+
+
+def t_widget_ring_only_on_percentage():
+    for stat in EVERY_STAT:
+        show(stat)
+        if stat['type'] == 'wasted_percentage':
+            assert WIDGET.ring_percentage is not None
+            assert WIDGET._ring_geometry() is not None
+        else:
+            assert WIDGET.ring_percentage is None, stat['type']
+            assert WIDGET._ring_geometry() is None, stat['type']
+
+
+def t_widget_ring_extremes():
+    for pct in (0, 0.1, 50, 99.9, 100):
+        show({'type': 'wasted_percentage',
+              'title': 'Percent of Spending Wasted', 'value': f'{pct}%',
+              'subtitle': 'x', 'data': {'percentage': pct}})
+        assert WIDGET._ring_geometry() is not None, pct
+        WIDGET.grab()  # must paint without raising
+
+
+def t_widget_hides_empty_subtitle():
+    show({'type': 'wasted_year', 'title': 'T', 'value': '$1.00',
+          'subtitle': '', 'data': {}})
+    assert WIDGET.subtitle_label.isHidden()
+    show({'type': 'wasted_month', 'title': 'T', 'value': '$1.00',
+          'subtitle': 'something', 'data': {}})
+    assert not WIDGET.subtitle_label.isHidden()
+
+
+def t_widget_reddens_wasted_only():
+    red = '255, 100, 100'
+    show({'type': 'wasted_year', 'title': 'T', 'value': '$9.99',
+          'subtitle': '', 'wasted_text': '$9.99', 'data': {}})
+    assert red in WIDGET.value_label.text()
+
+    show({'type': 'vacation_idea', 'title': 'T', 'value': 'Bali resort week',
+          'subtitle': 'Instead of wasting $9.99 this year',
+          'wasted_text': '$9.99', 'data': {}})
+    assert red in WIDGET.subtitle_label.text()
+    assert red not in WIDGET.value_label.text(), "the name must stay white"
+
+
+def t_widget_vendor_two_lines():
+    show({'type': 'top_wasteful_vendor', 'title': 'Biggest Waste Vendor',
+          'value': 'Uber 063015 SF**POOL**', 'value_extra': '$1,268.20',
+          'wasted_text': '$1,268.20', 'subtitle': 'wasted over 12 purchases',
+          'data': {}})
+    eq(len(WIDGET._value_lines), 2)
+    assert '<br>' in WIDGET.value_label.text()
+
+
+def t_widget_long_value_shrinks():
+    show({'type': 'no_data', 'title': 'T',
+          'value': 'Mark transactions as wasteful', 'subtitle': 'x',
+          'data': {}})
+    prose = WIDGET.value_label.font().pixelSize()
+    show({'type': 'wasted_year', 'title': 'T', 'value': '$1.00',
+          'subtitle': '', 'data': {}})
+    figure = WIDGET.value_label.font().pixelSize()
+    assert prose < figure, (prose, figure)
+
+
+def t_widget_resize_storm():
+    for height in range(140, 262, 20):
+        WIDGET.resize(int(height * 2.05), height)
+        QT_APP.processEvents()
+        for stat in EVERY_STAT:
+            show(stat)
+    WIDGET.resize(350, 170)
+    QT_APP.processEvents()
+
+
+def t_widget_minimum_size():
+    eq(WIDGET.minimumSize().width(), 280)
+    eq(WIDGET.minimumSize().height(), 140)
+
+
+def t_widget_corner_hit_testing():
+    from PyQt5.QtCore import QPoint
+    WIDGET.resize(350, 170)
+    QT_APP.processEvents()
+    eq(WIDGET.get_corner_at_pos(QPoint(2, 2)), 'top-left')
+    eq(WIDGET.get_corner_at_pos(QPoint(348, 2)), 'top-right')
+    eq(WIDGET.get_corner_at_pos(QPoint(2, 168)), 'bottom-left')
+    eq(WIDGET.get_corner_at_pos(QPoint(348, 168)), 'bottom-right')
+    eq(WIDGET.get_corner_at_pos(QPoint(175, 85)), None)
+
+
+def t_widget_footer():
+    WIDGET.update_footer()
+    assert 'Last updated' in WIDGET.footer_label.text()
+
+
+WIDGET_TESTS = [
+    ("widget: every stat renders", t_widget_renders_every_stat),
+    ("widget: value stays centred at all sizes", t_widget_value_centred),
+    ("widget: value never overflows the widget", t_widget_no_overflow),
+    ("widget: HTML in a value is escaped", t_widget_escapes_html),
+    ("widget: ring appears only on the percentage stat", t_widget_ring_only_on_percentage),
+    ("widget: ring paints at 0 and 100 percent", t_widget_ring_extremes),
+    ("widget: empty subtitle is hidden", t_widget_hides_empty_subtitle),
+    ("widget: wasted figures are reddened, names are not", t_widget_reddens_wasted_only),
+    ("widget: vendor value runs to two lines", t_widget_vendor_two_lines),
+    ("widget: long values shrink below hero size", t_widget_long_value_shrinks),
+    ("widget: survives repeated resizes", t_widget_resize_storm),
+    ("widget: minimum size enforced", t_widget_minimum_size),
+    ("widget: corner hit-testing", t_widget_corner_hit_testing),
+    ("widget: footer timestamp", t_widget_footer),
+]
+
+
+# ---------------------------------------------------------- plaid / flask
+def t_plaid_imports():
+    import plaid_client
+    assert hasattr(plaid_client, 'PlaidClient')
+
+
+def t_plaid_credentials_from_env():
+    import inspect
+    import plaid_client
+    source = inspect.getsource(plaid_client.PlaidClient.__init__)
+    assert 'environ' in source or 'getenv' in source, \
+        "credentials should come from the environment, not the source"
+
+
+def t_flask_routes():
+    import link_app
+    rules = {rule.rule for rule in link_app.app.url_map.iter_rules()}
+    assert '/' in rules, rules
+
+
+INTEGRATION_TESTS = [
+    ("plaid: module imports", t_plaid_imports),
+    ("plaid: credentials read from environment", t_plaid_credentials_from_env),
+    ("flask: link app exposes routes", t_flask_routes),
+]
+
+
+# ------------------------------------------------------------------- main
+def main():
+    global SANDBOX, WIDGET, QT_APP, EVERY_STAT
+
+    SANDBOX = tempfile.mkdtemp(prefix='money_guilt_tests_')
+    database.DATABASE_PATH = os.path.join(SANDBOX, 'test.db')
+
+    try:
+        for name, fn in DATABASE_TESTS:
+            check(name, fn)
+        for name, fn in CATEGORIZER_TESTS:
+            check(name, fn)
+        for name, fn in STATS_TESTS:
+            check(name, fn)
+
+        from PyQt5.QtWidgets import QApplication
+        import widget
+        import stats
+
+        QT_APP = QApplication.instance() or QApplication([])
+        WIDGET = widget.MoneyGuiltWidget()
+        WIDGET.resize(350, 170)
+        WIDGET.show()
+        QT_APP.processEvents()
+        EVERY_STAT = stats.generate_stats_list() + [stats.get_no_data_stat()]
+
+        for name, fn in WIDGET_TESTS:
+            check(name, fn)
+        for name, fn in INTEGRATION_TESTS:
+            check(name, fn)
+    finally:
+        shutil.rmtree(SANDBOX, ignore_errors=True)
+
+    print()
+    print('=' * 72)
+    print(f"PASSED {len(PASSED)}   FAILED {len(FAILED)}")
+    print('=' * 72)
+    for name in PASSED:
+        print(f"  pass  {name}")
+    for name, error, tb in FAILED:
+        print(f"  FAIL  {name}")
+        print(f"        {error}")
+    if FAILED:
+        print()
+        for name, error, tb in FAILED:
+            print(f"--- {name} ---")
+            print(tb)
+    print()
+    return 1 if FAILED else 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
