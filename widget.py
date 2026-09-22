@@ -535,6 +535,10 @@ class MoneyGuiltWidget(QWidget):
         """Show close button on mouse enter"""
         self.close_button.setVisible(True)
         self.close_button.move(16, 12)
+        # The button was created before the layout's widgets, so those
+        # widgets stack above it and intercept clicks at its position even
+        # though the title_label there renders nothing but background.
+        self.close_button.raise_()
         super().enterEvent(event)
 
     def leaveEvent(self, event):
