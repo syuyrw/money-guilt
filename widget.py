@@ -77,6 +77,7 @@ class MoneyGuiltWidget(QWidget):
         self.close_button = QPushButton("✕")
         self.close_button.setObjectName("close_button")
         self.close_button.setFixedSize(18, 18)
+        self.close_button.setCursor(QCursor(Qt.PointingHandCursor))
         self.close_button.clicked.connect(self.hide)
         self.close_button.setVisible(False)  # Hidden by default
         self.close_button.setParent(self)
