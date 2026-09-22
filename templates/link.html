@@ -35,9 +35,14 @@
             debugLog.parentElement.scrollTop = debugLog.parentElement.scrollHeight;
         }
 
-        function showMessage(text, type) {
+        function showMessage(text, type, loading) {
             const msgEl = document.getElementById('message');
             msgEl.textContent = text;
+            if (loading) {
+                const spinner = document.createElement('span');
+                spinner.className = 'loading';
+                msgEl.appendChild(spinner);
+            }
             msgEl.className = `message show ${type}`;
         }
 
@@ -53,11 +58,22 @@
             initPlaid();
         }
 
+        let plaidLoadAttempts = 0;
+        const MAX_PLAID_LOAD_ATTEMPTS = 50; // 5 seconds at 100ms each
+
         function initPlaid() {
             log('Initializing Plaid Link...');
 
             if (typeof Plaid === 'undefined') {
-                log('ERROR: Plaid not available yet, retrying...');
+                plaidLoadAttempts++;
+                if (plaidLoadAttempts >= MAX_PLAID_LOAD_ATTEMPTS) {
+                    log('ERROR: Plaid SDK failed to load after ' +
+                        MAX_PLAID_LOAD_ATTEMPTS + ' attempts, giving up');
+                    showMessage('Error: Plaid failed to load. Check your connection and reload the page.', 'error');
+                    return;
+                }
+                log('ERROR: Plaid not available yet, retrying... (' +
+                    plaidLoadAttempts + '/' + MAX_PLAID_LOAD_ATTEMPTS + ')');
                 setTimeout(initPlaid, 100);
                 return;
             }
@@ -103,13 +119,13 @@
             }
 
             log('Opening Plaid Link modal...');
-            showMessage('Opening Plaid Link<span class="loading"></span>', 'info');
+            showMessage('Opening Plaid Link', 'info', true);
             plaidHandler.open();
         }
 
         function exchangeToken(publicToken) {
             log('Exchanging public token for access token...');
-            showMessage('Linking account<span class="loading"></span>', 'info');
+            showMessage('Linking account', 'info', true);
 
             fetch('/api/exchange_token', {
                 method: 'POST',
@@ -122,7 +138,6 @@
             .then(data => {
                 log('Exchange response: ' + JSON.stringify(data));
                 if (data.success) {
-                    log('Access token: ' + data.access_token);
                     showMessage('✓ Account linked successfully!', 'success');
                     document.getElementById('linkButton').textContent = 'Account Linked ✓';
                     document.getElementById('linkButton').disabled = true;

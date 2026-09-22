@@ -42,11 +42,13 @@ def exchange_token():
         with open('access_token.txt', 'w') as f:
             f.write(access_token)
 
-        logger.info(f"Successfully exchanged token. Access token saved.")
+        logger.info("Successfully exchanged token. Access token saved.")
 
+        # The access token is a live credential for the linked account and
+        # must stay server-side. It is intentionally left out of this
+        # response so it can't end up in browser console logs or dev tools.
         return jsonify({
             'success': True,
-            'access_token': access_token,
             'message': 'Account linked successfully!'
         })
     except Exception as e:
