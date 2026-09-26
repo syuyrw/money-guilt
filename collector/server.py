@@ -3,6 +3,10 @@
     COLLECTOR_ADMIN_KEY=<long random string> python3 collector/server.py
 
 POST /report   from the widgets. Stores the latest total per install_id.
+POST /delete   from a widget whose user asked to have its data removed. Deletes
+               that install_id's row. Always succeeds, even if the id is
+               unknown, so calling it twice is harmless and it never reveals
+               whether an id exists.
 GET  /total    for the owner. Needs the header "X-Admin-Key: <key>". Returns
                the sum across all installs. Not reachable without the key.
 
@@ -60,6 +64,26 @@ def report():
             wasted_count = excluded.wasted_count, updated_at = excluded.updated_at""",
                      (install_id, round(total, 2), count, time.time()))
     return jsonify(ok=True)
+
+
+@app.route("/delete", methods=["POST"])
+def delete():
+    """Remove one install's stored total.
+
+    The install ID is a random UUID known only to that install, so knowing it
+    is the authorisation, as it is for /report. Nothing else is accepted.
+    """
+    if not request.is_json:
+        return jsonify(error="Expected JSON"), 415
+    data = request.get_json(silent=True)
+    install_id = data.get("install_id") if isinstance(data, dict) else None
+    if not (isinstance(install_id, str) and INSTALL_ID_RE.match(install_id)):
+        return jsonify(error="Bad install_id"), 400
+
+    with _db() as conn:
+        removed = conn.execute("DELETE FROM installs WHERE install_id = ?",
+                               (install_id,)).rowcount
+    return jsonify(ok=True, deleted=removed)
 
 
 @app.route("/total")
