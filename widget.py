@@ -7,7 +7,7 @@ import logging
 os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = '/usr/local/lib/python3.14/site-packages/PyQt5/Qt5/plugins'
 
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSystemTrayIcon, QMenu
-from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal, QRect, QRectF
+from PyQt5.QtCore import Qt, QTimer, QSize, QPoint, QSettings, pyqtSignal, QRect, QRectF
 from PyQt5.QtGui import QFont, QFontMetrics, QCursor, QPainter, QPen, QColor, QBrush, QPixmap, QIcon, QPainterPath, QRegion, QLinearGradient
 from stats import get_random_stat, get_all_stats
 from categorization_dialog import CategorizationDialog
@@ -25,8 +25,10 @@ class MoneyGuiltWidget(QWidget):
 
     stat_changed = pyqtSignal(dict)
 
-    def __init__(self):
+    def __init__(self, settings=None):
         super().__init__()
+        # Injectable so tests never touch the user's real saved position.
+        self.settings = settings or QSettings("MoneyGuilt", "MoneyGuiltWidget")
         self.current_stat = None
         self.stats = []
         self.current_stat_index = 0
@@ -310,6 +312,43 @@ class MoneyGuiltWidget(QWidget):
         dialog.exec_()
         logger.info("Categorization dialog opened")
 
+    def default_position(self):
+        """Top-right corner of the primary screen."""
+        geom = QApplication.primaryScreen().geometry()
+        return QPoint(geom.x() + geom.width() - self.width() - 20,
+                      geom.y() + 20)
+
+    def save_position(self):
+        self.settings.setValue("window/x", self.x())
+        self.settings.setValue("window/y", self.y())
+        self.settings.sync()
+
+    def initial_position(self):
+        """Where the widget was last left, or the default if that spot is
+        no longer on any screen.
+
+        Display layouts change (undocking, a monitor moved or unplugged), and
+        a saved coordinate from the old layout can land outside every screen,
+        leaving a widget that is running but can't be seen or dragged back.
+        """
+        if not (self.settings.contains("window/x")
+                and self.settings.contains("window/y")):
+            return self.default_position()
+
+        pos = QPoint(int(self.settings.value("window/x", type=int)),
+                     int(self.settings.value("window/y", type=int)))
+        center = QPoint(pos.x() + self.width() // 2,
+                        pos.y() + self.height() // 2)
+        if any(screen.availableGeometry().contains(center)
+               for screen in QApplication.screens()):
+            return pos
+        return self.default_position()
+
+    def hideEvent(self, event):
+        """Remember where the widget was whenever it is hidden or closed."""
+        self.save_position()
+        super().hideEvent(event)
+
     def toggle_widget(self):
         """Toggle widget visibility"""
         if self.isVisible():
@@ -328,6 +367,7 @@ class MoneyGuiltWidget(QWidget):
     def quit_app(self):
         """Quit the application"""
         logger.info("Quitting application")
+        self.save_position()
         QApplication.quit()
 
     def closeEvent(self, event):
@@ -529,6 +569,7 @@ class MoneyGuiltWidget(QWidget):
     def mouseReleaseEvent(self, event):
         """End dragging or resizing"""
         if event.button() == Qt.LeftButton:
+            moved = bool(self.resize_corner) or self.is_dragging
             if self.resize_corner:
                 self.resize_corner = None
                 self.resize_start_rect = None
@@ -540,6 +581,10 @@ class MoneyGuiltWidget(QWidget):
                 self.show_next_stat()
             self.drag_position = None
             self.is_dragging = False
+            if moved:
+                # Saved here as well as on hide, so a crash or kill still
+                # leaves the last position behind.
+                self.save_position()
             event.accept()
 
     def mouseDoubleClickEvent(self, event):
@@ -720,25 +765,17 @@ def main():
     # Create and show widget
     widget = MoneyGuiltWidget()
 
-    # Position in top-right of primary monitor
-    screen = app.primaryScreen()
-    screen_geom = screen.geometry()
+    pos = widget.initial_position()
+    logger.info(f"Positioning widget at ({pos.x()}, {pos.y()})")
 
-    # Top-right corner with padding
-    x = screen_geom.width() - 370  # 350 widget width + 20px padding
-    y = 20
-
-    logger.info(f"Screen: {screen.name()}, Geometry: {screen_geom.width()}x{screen_geom.height()}")
-    logger.info(f"Positioning widget at ({x}, {y})")
-
-    widget.move(x, y)
+    widget.move(pos)
     widget.setVisible(True)
     widget.show()
     widget.raise_()
     widget.activateWindow()
     widget.setFocus()
 
-    logger.info(f"Widget shown at ({x}, {y})")
+    logger.info(f"Widget shown at ({pos.x()}, {pos.y()})")
 
     sys.exit(app.exec_())
 

@@ -537,6 +537,121 @@ def t_widget_footer():
     assert 'Last updated' in WIDGET.footer_label.text()
 
 
+
+def fresh_settings():
+    from PyQt5.QtCore import QSettings
+    return QSettings(sandbox_path(f'pos_{os.urandom(4).hex()}.ini'),
+                     QSettings.IniFormat)
+
+
+def with_settings(fn):
+    """Run fn against a clean settings store, restoring the widget's own."""
+    original = WIDGET.settings
+    WIDGET.settings = fresh_settings()
+    try:
+        fn(WIDGET.settings)
+    finally:
+        WIDGET.settings = original
+
+
+def t_pos_default_when_nothing_saved():
+    def body(_):
+        eq(WIDGET.initial_position(), WIDGET.default_position())
+    with_settings(body)
+
+
+def t_pos_restores_saved():
+    from PyQt5.QtWidgets import QApplication
+    def body(settings):
+        screen = QApplication.primaryScreen().availableGeometry()
+        settings.setValue("window/x", screen.x() + 137)
+        settings.setValue("window/y", screen.y() + 211)
+        pos = WIDGET.initial_position()
+        eq((pos.x(), pos.y()), (screen.x() + 137, screen.y() + 211))
+    with_settings(body)
+
+
+def t_pos_offscreen_falls_back():
+    """A saved spot from a display layout that no longer exists must not
+    strand the widget where it can't be seen."""
+    def body(settings):
+        settings.setValue("window/x", 90000)
+        settings.setValue("window/y", 90000)
+        eq(WIDGET.initial_position(), WIDGET.default_position())
+    with_settings(body)
+
+
+def t_pos_hide_saves():
+    def body(settings):
+        WIDGET.move(300, 200)
+        QT_APP.processEvents()
+        expected = (WIDGET.x(), WIDGET.y())
+        WIDGET.hide()
+        QT_APP.processEvents()
+        eq((settings.value("window/x", type=int),
+            settings.value("window/y", type=int)), expected)
+        WIDGET.show()
+        QT_APP.processEvents()
+    with_settings(body)
+
+
+def t_pos_hide_show_keeps_place():
+    WIDGET.move(310, 220)
+    QT_APP.processEvents()
+    before = (WIDGET.x(), WIDGET.y())
+    WIDGET.hide()
+    WIDGET.show()
+    QT_APP.processEvents()
+    eq((WIDGET.x(), WIDGET.y()), before)
+
+
+def t_pos_drag_release_saves():
+    from PyQt5.QtCore import QPointF, QEvent, Qt as QtC
+    from PyQt5.QtGui import QMouseEvent
+    def body(settings):
+        WIDGET.move(400, 260)
+        QT_APP.processEvents()
+        WIDGET.is_dragging = True
+        WIDGET.drag_position = WIDGET.pos()
+        release = QMouseEvent(QEvent.MouseButtonRelease, QPointF(50, 50),
+                              QtC.LeftButton, QtC.NoButton, QtC.NoModifier)
+        WIDGET.mouseReleaseEvent(release)
+        eq((settings.value("window/x", type=int),
+            settings.value("window/y", type=int)), (400, 260))
+    with_settings(body)
+
+
+def t_pos_click_without_drag_does_not_save():
+    from PyQt5.QtCore import QPointF, QEvent, Qt as QtC
+    from PyQt5.QtGui import QMouseEvent
+    def body(settings):
+        WIDGET.is_dragging = False
+        WIDGET.resize_corner = None
+        release = QMouseEvent(QEvent.MouseButtonRelease, QPointF(50, 50),
+                              QtC.LeftButton, QtC.NoButton, QtC.NoModifier)
+        WIDGET.mouseReleaseEvent(release)  # a click advances the stat
+        assert not settings.contains("window/x"), "a plain click saved a position"
+    with_settings(body)
+
+
+def t_pos_round_trip_across_instances():
+    from PyQt5.QtCore import QSettings
+    from PyQt5.QtWidgets import QApplication
+    path = sandbox_path('roundtrip.ini')
+    screen = QApplication.primaryScreen().availableGeometry()
+    first = QSettings(path, QSettings.IniFormat)
+    first.setValue("window/x", screen.x() + 50)
+    first.setValue("window/y", screen.y() + 60)
+    first.sync()
+    original = WIDGET.settings
+    WIDGET.settings = QSettings(path, QSettings.IniFormat)
+    try:
+        pos = WIDGET.initial_position()
+        eq((pos.x(), pos.y()), (screen.x() + 50, screen.y() + 60))
+    finally:
+        WIDGET.settings = original
+
+
 WIDGET_TESTS = [
     ("widget: every stat renders", t_widget_renders_every_stat),
     ("widget: value stays centred at all sizes", t_widget_value_centred),
@@ -552,6 +667,14 @@ WIDGET_TESTS = [
     ("widget: minimum size enforced", t_widget_minimum_size),
     ("widget: corner hit-testing", t_widget_corner_hit_testing),
     ("widget: footer timestamp", t_widget_footer),
+    ("position: default when nothing is saved", t_pos_default_when_nothing_saved),
+    ("position: a saved position is restored", t_pos_restores_saved),
+    ("position: an off-screen saved position falls back to default", t_pos_offscreen_falls_back),
+    ("position: hiding saves the position", t_pos_hide_saves),
+    ("position: hide then show keeps the place", t_pos_hide_show_keeps_place),
+    ("position: releasing a drag saves the position", t_pos_drag_release_saves),
+    ("position: a plain click does not save", t_pos_click_without_drag_does_not_save),
+    ("position: survives a new settings instance", t_pos_round_trip_across_instances),
 ]
 
 
@@ -602,7 +725,9 @@ def main():
         import stats
 
         QT_APP = QApplication.instance() or QApplication([])
-        WIDGET = widget.MoneyGuiltWidget()
+        from PyQt5.QtCore import QSettings
+        WIDGET = widget.MoneyGuiltWidget(settings=QSettings(
+            sandbox_path('widget_settings.ini'), QSettings.IniFormat))
         WIDGET.resize(350, 170)
         WIDGET.show()
         QT_APP.processEvents()
