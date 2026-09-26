@@ -665,6 +665,25 @@ def t_tray_icon_is_template():
     assert opaque > 40, f"icon looks empty ({opaque} opaque pixels)"
 
 
+
+def t_widget_title_is_larger_and_fits():
+    """Title is 50% above the original 13px, and never clips."""
+    for size in [(350, 170), (280, 140), (500, 260)]:
+        WIDGET.resize(*size)
+        QT_APP.processEvents()
+        for stat in EVERY_STAT:
+            show(stat)
+            fm = WIDGET.title_label.fontMetrics()
+            need = fm.boundingRect(WIDGET.title_label.text()).width()
+            assert need <= WIDGET.title_label.width(), (size, stat['type'], need)
+    WIDGET.resize(350, 170)
+    QT_APP.processEvents()
+    show({'type': 'wasted_year', 'title': 'Total Wasted', 'value': '$1',
+          'subtitle': '', 'data': {}})
+    px = WIDGET.title_label.font().pixelSize()
+    assert 19 <= px <= 20, f"short title should be ~20px (1.5 x 13), got {px}"
+
+
 WIDGET_TESTS = [
     ("widget: every stat renders", t_widget_renders_every_stat),
     ("widget: value stays centred at all sizes", t_widget_value_centred),
@@ -681,6 +700,7 @@ WIDGET_TESTS = [
     ("widget: corner hit-testing", t_widget_corner_hit_testing),
     ("widget: footer timestamp", t_widget_footer),
     ("widget: tray icon is a template image", t_tray_icon_is_template),
+    ("widget: title is 50% larger and never clips", t_widget_title_is_larger_and_fits),
     ("position: default when nothing is saved", t_pos_default_when_nothing_saved),
     ("position: a saved position is restored", t_pos_restores_saved),
     ("position: an off-screen saved position falls back to default", t_pos_offscreen_falls_back),

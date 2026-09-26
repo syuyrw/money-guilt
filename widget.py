@@ -720,6 +720,14 @@ class MoneyGuiltWidget(QWidget):
         natural_title = self.title_label.fontMetrics().height()
         self.title_label.setFixedHeight(max(natural_title, bottom_height))
 
+        # The bands have to match from both sides. A large title can be the
+        # taller one (a stat with no subtitle has only the footer below), so
+        # pad the bottom band up to it. Done as a top margin rather than a
+        # spacer item: an item adds a layout gap even at height 0, which
+        # would shift every stat that needs no padding.
+        self.bottom_band.setContentsMargins(
+            0, max(0, natural_title - bottom_height), 0, 0)
+
     def update_rounded_corners_mask(self):
         """Update the rounded corners mask based on current size"""
         path = QPainterPath()
@@ -727,6 +735,26 @@ class MoneyGuiltWidget(QWidget):
         region = QRegion(path.toFillPolygon().toPolygon())
         self.setMask(region)
 
+
+    def _fitted_title_size(self, preferred):
+        """Largest title size, at most preferred, that fits on one line.
+
+        The title is 50% larger than the original 13px (about 20px), which
+        is wide enough that the longest ("Percent of Spending Wasted") would
+        clip on a narrow widget, so it steps down until it fits.
+        """
+        text = self.title_label.text()
+        if not text:
+            return preferred
+        margins = self.layout().contentsMargins()
+        available = self.width() - margins.left() - margins.right() - 8
+        probe = QFont(self.title_label.font())
+        probe.setBold(True)
+        for size in range(preferred, 11, -1):
+            probe.setPixelSize(size)
+            if QFontMetrics(probe).boundingRect(text).width() <= available:
+                return size
+        return 12
 
     def scale_fonts_to_fit(self):
         """Scale fonts dynamically based on widget size.
@@ -741,7 +769,7 @@ class MoneyGuiltWidget(QWidget):
 
         # Scale fonts proportionally. The value is sized separately in
         # _fit_value, once the bands are known.
-        title_size = max(9, int(13 * scale_factor))
+        title_size = self._fitted_title_size(max(12, round(19.5 * scale_factor)))
         subtitle_size = max(9, int(13 * scale_factor))
         footer_size = max(8, int(10 * scale_factor))
 
