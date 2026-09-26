@@ -26,10 +26,9 @@ By default, Money Guilt reports a single anonymous total to a server run by the 
 
 1. **A random install ID.** It is generated on your Mac the first time a report is sent. It is not derived from your name, email, device, or bank.
 2. **Your total wasted dollars**, the running sum of the transactions you marked wasteful.
-3. **A transaction count**, how many transactions that total covers.
-4. **A version number** for the report format.
+3. **A version number** for the report format.
 
-It never includes merchant names, dates, individual purchase amounts, account details, balances, or anything from Plaid.
+It never includes merchant names, vendors, transaction names, dates, individual purchase amounts, how many purchases there are, account details, balances, or anything from Plaid.
 
 The server stores your latest report against your install ID and adds the totals from all installs together. The developer uses the combined figure for their own information. It is not sold, shared, or shown to other users.
 

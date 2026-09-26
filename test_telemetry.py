@@ -54,9 +54,8 @@ class Telemetry(unittest.TestCase):
         self.assertTrue(telemetry.report_now(self.wasted, self.post))
         url, report = self.sent[0]
         self.assertEqual(url, "https://collector.example")
-        self.assertEqual(set(report), {"install_id", "total_wasted", "wasted_count", "version"})
+        self.assertEqual(set(report), {"install_id", "total_wasted", "version"})
         self.assertEqual(report["total_wasted"], 317.19)
-        self.assertEqual(report["wasted_count"], 9)
 
     def test_unchanged_total_is_not_sent_twice_but_a_change_is(self):
         telemetry.report_now(self.wasted, self.post)
@@ -269,22 +268,26 @@ class Collector(unittest.TestCase):
         server.ADMIN_KEY = "secret-key"
         self.client = server.app.test_client()
 
-    def report(self, install_id=GOOD_ID, total=10.5, count=2):
+    def report(self, install_id=GOOD_ID, total=10.5, **extra):
         return self.client.post("/report", json={
-            "install_id": install_id, "total_wasted": total, "wasted_count": count})
+            "install_id": install_id, "total_wasted": total, **extra})
 
     def total(self, key="secret-key"):
         return self.client.get("/total", headers={"X-Admin-Key": key})
 
     def test_totals_add_up_across_installs(self):
-        self.report(GOOD_ID, 100, 3)
-        self.report("223e4567-e89b-12d3-a456-426614174000", 50.25, 2)
+        self.report(GOOD_ID, 100)
+        self.report("223e4567-e89b-12d3-a456-426614174000", 50.25)
         body = self.total().get_json()
-        self.assertEqual(body, {"total_wasted": 150.25, "wasted_count": 5, "installs": 2})
+        self.assertEqual(body, {"total_wasted": 150.25, "installs": 2})
+
+    def test_a_count_from_an_older_widget_is_ignored_not_stored(self):
+        self.assertEqual(self.report(GOOD_ID, 10, wasted_count=7).status_code, 200)
+        self.assertEqual(self.total().get_json(), {"total_wasted": 10, "installs": 1})
 
     def test_repeat_reports_replace_instead_of_adding(self):
-        self.report(GOOD_ID, 100, 3)
-        self.report(GOOD_ID, 120, 4)
+        self.report(GOOD_ID, 100)
+        self.report(GOOD_ID, 120)
         self.assertEqual(self.total().get_json()["total_wasted"], 120)
 
     def test_total_needs_the_admin_key(self):
@@ -296,7 +299,7 @@ class Collector(unittest.TestCase):
 
     def test_bad_reports_are_rejected(self):
         for kwargs in ({"install_id": "nope"}, {"total": -1}, {"total": 1e12},
-                       {"total": True}, {"total": "5"}, {"count": -1}, {"count": 1.5}):
+                       {"total": True}, {"total": "5"}):
             self.assertEqual(self.report(**kwargs).status_code, 400, kwargs)
         self.assertEqual(self.client.post("/report", data="x").status_code, 415)
         self.assertEqual(self.client.post("/report", json=[1]).status_code, 400)
@@ -312,14 +315,14 @@ class Collector(unittest.TestCase):
         return self.client.post("/delete", json={"install_id": install_id})
 
     def test_delete_removes_that_installs_total(self):
-        self.report(GOOD_ID, 100, 3)
+        self.report(GOOD_ID, 100)
         other = "223e4567-e89b-12d3-a456-426614174000"
-        self.report(other, 50, 2)
+        self.report(other, 50)
         response = self.delete(GOOD_ID)
         self.assertEqual((response.status_code, response.get_json()),
                          (200, {"ok": True, "deleted": 1}))
         self.assertEqual(self.total().get_json(),
-                         {"total_wasted": 50, "wasted_count": 2, "installs": 1},
+                         {"total_wasted": 50, "installs": 1},
                          "the other install must be untouched")
 
     def test_delete_of_an_unknown_id_succeeds_and_is_repeatable(self):
@@ -338,8 +341,8 @@ class Collector(unittest.TestCase):
         self.assertEqual(self.client.post("/delete", data="x").status_code, 415)
 
     def test_a_wildcard_cannot_delete_everyone(self):
-        self.report(GOOD_ID, 10, 1)
-        self.report("223e4567-e89b-12d3-a456-426614174000", 20, 1)
+        self.report(GOOD_ID, 10)
+        self.report("223e4567-e89b-12d3-a456-426614174000", 20)
         self.client.post("/delete", json={"install_id": "%"})
         self.client.post("/delete", json={"install_id": "%%%%%%%%-%%%%-%%%%-%%%%-%%%%%%%%%%%%"})
         self.assertEqual(self.total().get_json()["installs"], 2)

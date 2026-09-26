@@ -3,12 +3,12 @@
 What is sent, and nothing else:
     install_id    a random ID made on first use; not tied to a name or account
     total_wasted  the running total of wasted dollars on this install
-    wasted_count  how many transactions that total covers
     version       this report format's version
 
-No merchants, dates, individual amounts, balances or Plaid data ever leave the
-machine. The collector keeps the latest total per install_id, so repeated
-reports never double count.
+No merchants, vendors, transaction names, dates, individual amounts, counts,
+balances or Plaid data ever leave the machine. The collector keeps the latest
+total per install_id and adds those up, so a transaction whose dollars were
+already reported is never counted twice.
 
 On by default, and easy to turn off: the tray menu's "Share Anonymous Wasted
 Total" item, or python3 telemetry.py disable. The first launch shows a notice
@@ -101,7 +101,6 @@ def build_report(install_id, wasted):
     return {
         "install_id": install_id,
         "total_wasted": round(float(wasted["total"]), 2),
-        "wasted_count": int(wasted["count"]),
         "version": REPORT_VERSION,
     }
 
@@ -238,11 +237,11 @@ def report_now(get_wasted=None, post=None, post_delete=None):
         report = build_report(config["install_id"], get_wasted())
 
         # Nothing new to say
-        if config.get("last_sent") == [report["total_wasted"], report["wasted_count"]]:
+        if config.get("last_sent") == [report["total_wasted"]]:
             return False
 
         if (post or _post)(url, report):
-            config["last_sent"] = [report["total_wasted"], report["wasted_count"]]
+            config["last_sent"] = [report["total_wasted"]]
             save_config(config)
             return True
     except (OSError, ValueError, urllib.error.URLError):

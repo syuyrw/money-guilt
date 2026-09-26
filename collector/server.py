@@ -72,21 +72,19 @@ def report():
     if not isinstance(data, dict):
         return jsonify(error="Bad report"), 400
 
-    install_id, total, count = (data.get("install_id"), data.get("total_wasted"),
-                                data.get("wasted_count"))
+    # Older widgets also sent a "wasted_count"; it is ignored and never stored.
+    install_id, total = data.get("install_id"), data.get("total_wasted")
     if not (isinstance(install_id, str) and INSTALL_ID_RE.match(install_id)):
         return jsonify(error="Bad install_id"), 400
     if isinstance(total, bool) or not isinstance(total, (int, float)) \
             or not 0 <= total <= MAX_TOTAL:
         return jsonify(error="Bad total_wasted"), 400
-    if isinstance(count, bool) or not isinstance(count, int) or not 0 <= count <= 10_000_000:
-        return jsonify(error="Bad wasted_count"), 400
 
     with _db() as conn:
         conn.execute("""INSERT INTO installs VALUES (?, ?, ?, ?)
             ON CONFLICT(install_id) DO UPDATE SET total_wasted = excluded.total_wasted,
             wasted_count = excluded.wasted_count, updated_at = excluded.updated_at""",
-                     (install_id, round(total, 2), count, time.time()))
+                     (install_id, round(total, 2), 0, time.time()))
     return jsonify(ok=True)
 
 
@@ -172,10 +170,10 @@ def total():
     if not ADMIN_KEY or not hmac.compare_digest(supplied, ADMIN_KEY):
         return jsonify(error="Forbidden"), 403
     with _db() as conn:
-        row = conn.execute("SELECT SUM(total_wasted), SUM(wasted_count), COUNT(*) "
+        row = conn.execute("SELECT SUM(total_wasted), COUNT(*) "
                            "FROM installs").fetchone()
     return jsonify(total_wasted=round(row[0] or 0, 2),
-                   wasted_count=row[1] or 0, installs=row[2])
+                   installs=row[1])
 
 
 if __name__ == "__main__":

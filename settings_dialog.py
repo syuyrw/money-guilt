@@ -116,8 +116,8 @@ class SettingsDialog(QDialog):
         self.share_checkbox.toggled.connect(self._on_share_toggled)
         lay.addWidget(self.share_checkbox)
         lay.addWidget(_note(
-            "Sends only a random install ID, your total wasted dollars and a "
-            "count of transactions. Never merchants, dates or individual "
+            "Sends only a random install ID and your total wasted dollars. "
+            "Never merchants, vendors, dates, counts or individual "
             "purchases."))
 
         self.share_status = QLabel()
