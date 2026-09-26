@@ -1206,20 +1206,19 @@ def t_priv_a_new_widget_reads_the_saved_settings():
         eq(other.privacy.auto_hide, False)
         eq(other.privacy.idle_limit, 120)
         eq(other.hide_from_capture, False)
-        eq(other.hide_amounts_action.isChecked(), True)
-        eq(other.capture_action.isChecked(), False)
     finally:
         other.tray_icon.hide()
 
 
-def t_priv_defaults_are_the_safe_ones():
+def t_priv_defaults_keep_the_number_visible():
     from PyQt5.QtCore import QSettings
     import widget
     other = widget.MoneyGuiltWidget(settings=QSettings(
         sandbox_path('priv_defaults.ini'), QSettings.IniFormat))
     try:
         eq(other.privacy.manual, False)
-        eq(other.privacy.auto_hide, True, "auto-hide is on by default")
+        eq(other.privacy.auto_hide, False,
+           "the widget must not hide its numbers by itself; seeing them is the point")
         eq(other.privacy.idle_limit, 300, "five minutes")
         eq(other.hide_from_capture, True, "capture exclusion is on by default")
     finally:
@@ -1743,10 +1742,10 @@ WIDGET_TESTS = [
     ("privacy: a click does not undo manual hiding", t_priv_click_does_not_undo_manual_hiding),
     ("privacy: settings persist", t_priv_settings_persist),
     ("privacy: a new widget reads the saved settings", t_priv_a_new_widget_reads_the_saved_settings),
-    ("privacy: defaults are the safe ones", t_priv_defaults_are_the_safe_ones),
+    ("privacy: defaults keep the number visible", t_priv_defaults_keep_the_number_visible),
     ("privacy: the native capture call is skipped off cocoa", t_priv_capture_call_is_skipped_off_cocoa),
     ("privacy: the native capture call is made on cocoa", t_priv_capture_call_is_made_on_cocoa),
-    ("privacy: the tray menu has the privacy actions", t_priv_tray_menu_has_the_privacy_actions),
+    ("privacy: the tray menu does not duplicate the Settings page", t_tray_menu_does_not_duplicate_the_settings_page),
     ("feedback: the menu item opens a mail draft", t_feedback_menu_item_opens_a_mail_draft),
     ("feedback: the form validates, then sends", t_feedback_form_validates_then_sends),
     ("feedback: a failed send shows why and can be retried", t_feedback_form_shows_errors_and_allows_retry),

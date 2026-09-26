@@ -53,7 +53,9 @@ class MoneyGuiltWidget(QWidget):
         self.settings = settings or QSettings("MoneyGuilt", "MoneyGuiltWidget")
         self.privacy = privacy.PrivacyState(
             manual=self.settings.value("privacy/manual", False, type=bool),
-            auto_hide=self.settings.value("privacy/auto_hide", True, type=bool),
+            # Off by default: the widget exists to keep the number in front of
+            # you, so it must not hide itself when you stop touching the mouse.
+            auto_hide=self.settings.value("privacy/auto_hide", False, type=bool),
             idle_limit=self.settings.value("privacy/idle_minutes", 5, type=int) * 60)
         self.rotation_minutes = self.settings.value("display/rotation_minutes", 60, type=int)
         # On by default, as the user asked: every launch offers to categorize

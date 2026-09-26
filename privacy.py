@@ -61,7 +61,7 @@ class PrivacyState:
     mouse would see the amounts, which is exactly what the lock is for.
     """
 
-    def __init__(self, manual=False, auto_hide=True,
+    def __init__(self, manual=False, auto_hide=False,
                  idle_limit=DEFAULT_IDLE_LIMIT, idle_fn=idle_seconds):
         self.manual = manual
         self.auto_hide = auto_hide
