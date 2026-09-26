@@ -7,11 +7,13 @@ import logging
 os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = '/usr/local/lib/python3.14/site-packages/PyQt5/Qt5/plugins'
 
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSystemTrayIcon, QMenu
-from PyQt5.QtCore import Qt, QTimer, QSize, QPoint, QSettings, pyqtSignal, QRect, QRectF
+from PyQt5.QtCore import Qt, QTimer, QSize, QPoint, QSettings, pyqtSignal, QRect, QRectF, QLockFile, QDir
 from PyQt5.QtGui import QFont, QFontMetrics, QCursor, QPainter, QPen, QColor, QBrush, QPixmap, QIcon, QPainterPath, QRegion, QLinearGradient
 from stats import get_random_stat, get_all_stats
 from categorization_dialog import CategorizationDialog
 from datetime import datetime
+from database import init_db
+from app_icon import app_icon
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -276,11 +278,14 @@ class MoneyGuiltWidget(QWidget):
         self.toggle_action = tray_menu.addAction("Hide Widget")
         self.toggle_action.triggered.connect(self.toggle_widget)
 
+        next_action = tray_menu.addAction("Next Stat")
+        next_action.triggered.connect(lambda: self.advance_stat())
+
         tray_menu.addSeparator()
 
         # Categorize transactions
         categorize_action = tray_menu.addAction("Categorize Transactions")
-        categorize_action.triggered.connect(self.open_categorization_dialog)
+        categorize_action.triggered.connect(lambda: self.open_categorization_dialog())
 
         tray_menu.addSeparator()
 
@@ -313,11 +318,26 @@ class MoneyGuiltWidget(QWidget):
 
         logger.info("System tray icon created")
 
-    def open_categorization_dialog(self):
-        """Open transaction categorization dialog"""
-        dialog = CategorizationDialog(self)
+    def open_categorization_dialog(self, limit=100, only_if_new=False):
+        """Open transaction categorization dialog.
+
+        With only_if_new, does nothing when there is nothing to ask about. The
+        tray menu leaves it off so choosing "Categorize Transactions" still
+        answers with an "all done" message rather than silence.
+        """
+        dialog = CategorizationDialog(self, limit=limit)
+        if only_if_new and not dialog.transactions:
+            return
         dialog.exec_()
         logger.info("Categorization dialog opened")
+
+    def prompt_for_new_transactions(self):
+        """Startup prompt: ask the user to categorize a few new transactions.
+
+        Silent when there are none, so launching the widget doesn't open a
+        window just to say there is nothing to do.
+        """
+        self.open_categorization_dialog(limit=10, only_if_new=True)
 
     def default_position(self):
         """Top-right corner of the primary screen."""
@@ -400,8 +420,6 @@ class MoneyGuiltWidget(QWidget):
         """Load all available stats"""
         self.stats = get_all_stats()
         logger.info(f"Loaded {len(self.stats)} stats")
-        if self.stats:
-            logger.info(f"Available stats: {[s['type'] for s in self.stats]}")
 
     def setup_timers(self):
         """Setup timers for updating stats"""
@@ -416,6 +434,14 @@ class MoneyGuiltWidget(QWidget):
         self.update_timer.start(60000)  # 1 minute
 
         logger.info("Timers started: stat rotation every hour")
+
+    def advance_stat(self):
+        """Refresh the stats from the database, then move on to the next one"""
+        self.load_stats()
+        self.show_next_stat()
+        # Restart the hourly timer so a stat you just picked isn't replaced
+        # a moment later
+        self.stat_timer.start(3600000)
 
     def show_next_stat(self):
         """Display the next stat in rotation"""
@@ -595,12 +621,9 @@ class MoneyGuiltWidget(QWidget):
             event.accept()
 
     def mouseDoubleClickEvent(self, event):
-        """Reload stats on double-click"""
+        """Show the next stat on double-click"""
         if event.button() == Qt.LeftButton:
-            logger.info("Reloading stats...")
-            self.load_stats()
-            self.current_stat_index = 0
-            self.show_next_stat()
+            self.advance_stat()
             self.is_dragging = False
             event.accept()
 
@@ -796,6 +819,17 @@ class MoneyGuiltWidget(QWidget):
 def main():
     """Main entry point"""
     app = QApplication(sys.argv)
+    app.setWindowIcon(app_icon())
+
+    # Only one copy at a time. The lock is released if the process dies, so a
+    # crash can't leave the widget unable to start.
+    lock = QLockFile(os.path.join(QDir.tempPath(), "money_guilt.lock"))
+    lock.setStaleLockTime(0)
+    if not lock.tryLock(100):
+        logger.info("Money Guilt is already running; exiting")
+        sys.exit(0)
+
+    init_db()
 
     # Create and show widget
     widget = MoneyGuiltWidget()
@@ -811,6 +845,9 @@ def main():
     widget.setFocus()
 
     logger.info(f"Widget shown at ({pos.x()}, {pos.y()})")
+
+    # Ask about new transactions once the event loop is running
+    QTimer.singleShot(0, widget.prompt_for_new_transactions)
 
     sys.exit(app.exec_())
 

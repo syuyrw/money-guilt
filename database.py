@@ -76,6 +76,18 @@ def init_db():
             )
         """)
 
+        # Migration: track which transactions the user has reviewed
+        columns = [row[1] for row in cursor.execute("PRAGMA table_info(transactions)")]
+        if "reviewed" not in columns:
+            cursor.execute("ALTER TABLE transactions ADD COLUMN reviewed BOOLEAN DEFAULT 0")
+
+        if "prompted" not in columns:
+            cursor.execute("ALTER TABLE transactions ADD COLUMN prompted BOOLEAN DEFAULT 0")
+            # Anything already reviewed has been asked about
+            cursor.execute("UPDATE transactions SET prompted = 1 WHERE reviewed = 1")
+        if "datetime" not in columns:
+            cursor.execute("ALTER TABLE transactions ADD COLUMN datetime TEXT")
+
         conn.commit()
         logger.info("Database initialized")
 
@@ -118,9 +130,14 @@ def save_transactions(transactions):
                     category = tx.personal_finance_category.detailed
 
             cursor.execute("""
-                INSERT OR REPLACE INTO transactions
-                (id, account_id, date, name, amount, category, category_primary)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO transactions
+                (id, account_id, date, name, amount, category, category_primary, datetime)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    datetime = excluded.datetime,
+                    date = excluded.date,
+                    name = excluded.name,
+                    amount = excluded.amount
             """, (
                 tx.transaction_id,
                 tx.account_id,
@@ -128,7 +145,9 @@ def save_transactions(transactions):
                 tx.name,
                 tx.amount,
                 category,
-                category_primary
+                category_primary,
+                # Plaid often leaves both null; stored as NULL when missing
+                str(getattr(tx, 'datetime', None) or getattr(tx, 'authorized_datetime', None) or '') or None
             ))
 
         conn.commit()

@@ -775,6 +775,268 @@ def t_widget_title_is_larger_and_fits():
     assert 19 <= px <= 20, f"short title should be ~20px (1.5 x 13), got {px}"
 
 
+
+# ------------------------------------------- startup prompt (new transactions)
+def with_temp_db(fn):
+    """Run fn against a fresh database and a throwaway categorizer, so the
+    dialog can neither touch the real db nor write merchant_overrides.json."""
+    import categorizer
+    original_path = database.DATABASE_PATH
+    original_cat = categorizer._categorizer
+    database.DATABASE_PATH = sandbox_path(f'rev_{os.urandom(4).hex()}.db')
+    categorizer._categorizer = categorizer.TransactionCategorizer(
+        overrides_file=sandbox_path(f'rev_ov_{os.urandom(4).hex()}.json'))
+    try:
+        database.init_db()
+        database.save_accounts([fake_account('acct1', 'Checking', 1.0)])
+        fn()
+    finally:
+        database.DATABASE_PATH = original_path
+        categorizer._categorizer = original_cat
+
+
+def seed_reviewable(count):
+    database.save_transactions([
+        fake_tx(f'r{i}', f'Merchant {i}', 10.0 + i, i) for i in range(count)])
+
+
+def prompted_map():
+    with database.get_db() as conn:
+        return {r['id']: r['prompted'] for r in
+                conn.execute("SELECT id, prompted FROM transactions")}
+
+
+def quiet_completion(fn):
+    """Run fn with the end-of-batch message box stubbed so it can't block."""
+    from PyQt5.QtWidgets import QMessageBox
+    real = QMessageBox.information
+    QMessageBox.information = staticmethod(lambda *a, **k: None)
+    try:
+        return fn()
+    finally:
+        QMessageBox.information = real
+
+
+def reviewed_map():
+    with database.get_db() as conn:
+        return {r['id']: r['reviewed'] for r in
+                conn.execute("SELECT id, reviewed FROM transactions")}
+
+
+def t_rev_migrates_existing_database():
+    """A database from before the reviewed column must gain it, keeping rows."""
+    import sqlite3
+    path = sandbox_path('legacy_schema.db')
+    conn = sqlite3.connect(path)
+    conn.execute("""CREATE TABLE transactions (id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL, date DATE NOT NULL, name TEXT NOT NULL,
+        amount REAL NOT NULL, category TEXT, category_primary TEXT,
+        is_wasteful BOOLEAN DEFAULT 0, created_at TIMESTAMP)""")
+    conn.execute("INSERT INTO transactions (id, account_id, date, name, amount,"
+                 " category, is_wasteful) VALUES ('old1','a','2026-01-01',"
+                 "'Starbucks',4.5,'eating out',1)")
+    conn.commit(); conn.close()
+
+    original = database.DATABASE_PATH
+    database.DATABASE_PATH = path
+    try:
+        database.init_db()
+        database.init_db()  # running it again must be harmless
+        with database.get_db() as c:
+            row = c.execute("SELECT * FROM transactions WHERE id='old1'").fetchone()
+        eq(row['reviewed'], 0)
+        eq(row['category'], 'eating out', "existing category must survive")
+        eq(row['is_wasteful'], 1, "existing wasteful flag must survive")
+    finally:
+        database.DATABASE_PATH = original
+
+
+def t_rev_resync_keeps_user_choices():
+    """Regression: INSERT OR REPLACE wiped category, wasteful and reviewed."""
+    def body():
+        seed_reviewable(1)
+        with database.get_db() as c:
+            c.execute("UPDATE transactions SET category='groceries',"
+                      " is_wasteful=1, reviewed=1 WHERE id='r0'")
+            c.commit()
+        # the same transaction arrives again from Plaid with a corrected amount
+        database.save_transactions([fake_tx('r0', 'Merchant 0', 99.0, 0)])
+        with database.get_db() as c:
+            row = c.execute("SELECT * FROM transactions WHERE id='r0'").fetchone()
+        eq(row['amount'], 99.0, "fresh data should still update")
+        eq(row['category'], 'groceries')
+        eq(row['is_wasteful'], 1)
+        eq(row['reviewed'], 1)
+    with_temp_db(body)
+
+
+def t_rev_dialog_shows_only_unreviewed_newest_first():
+    from categorization_dialog import CategorizationDialog
+    def body():
+        seed_reviewable(6)
+        with database.get_db() as c:
+            c.execute("UPDATE transactions SET prompted=1 WHERE id IN ('r0','r1')")
+            c.commit()
+        dialog = CategorizationDialog(limit=100)
+        ids = [t[0] for t in dialog.transactions]
+        eq(ids, ['r2', 'r3', 'r4', 'r5'], "already-asked rows excluded, newest first")
+    with_temp_db(body)
+
+
+def t_rev_dialog_respects_limit():
+    from categorization_dialog import CategorizationDialog
+    def body():
+        seed_reviewable(15)
+        eq(len(CategorizationDialog(limit=10).transactions), 10)
+    with_temp_db(body)
+
+
+def t_rev_categorizing_marks_reviewed_skip_does_not():
+    from categorization_dialog import CategorizationDialog
+    from PyQt5.QtWidgets import QMessageBox
+    def body():
+        seed_reviewable(3)
+        real_info = QMessageBox.information
+        QMessageBox.information = staticmethod(lambda *a, **k: None)
+        try:
+            dialog = CategorizationDialog(limit=10)
+            first = dialog.transactions[0][0]
+            second = dialog.transactions[1][0]
+            dialog.category_combo.setCurrentText('groceries')
+            dialog.wasteful_checkbox.setChecked(True)
+            dialog.categorize_transaction()   # first: categorised
+            dialog.skip_transaction()         # second: skipped
+        finally:
+            QMessageBox.information = real_info
+        flags = reviewed_map()
+        eq(flags[first], 1, "a categorised transaction is marked reviewed")
+        eq(flags[second], 0, "a skipped one is not marked reviewed")
+        asked = prompted_map()
+        eq((asked[first], asked[second]), (1, 1),
+           "both were shown, so neither is asked about again")
+        with database.get_db() as c:
+            row = c.execute("SELECT category, is_wasteful FROM transactions"
+                            " WHERE id=?", (first,)).fetchone()
+        eq((row['category'], row['is_wasteful']), ('groceries', 1))
+    with_temp_db(body)
+
+
+def t_rev_prompt_silent_when_nothing_new():
+    from categorization_dialog import CategorizationDialog
+    def body():
+        seed_reviewable(2)
+        with database.get_db() as c:
+            c.execute("UPDATE transactions SET reviewed=1, prompted=1")
+            c.commit()
+        opened = []
+        real = CategorizationDialog.exec_
+        CategorizationDialog.exec_ = lambda self: opened.append(len(self.transactions))
+        try:
+            WIDGET.prompt_for_new_transactions()
+        finally:
+            CategorizationDialog.exec_ = real
+        eq(opened, [], "no popup when there is nothing new")
+    with_temp_db(body)
+
+
+def t_rev_prompt_opens_with_a_batch():
+    from categorization_dialog import CategorizationDialog
+    def body():
+        seed_reviewable(25)
+        opened = []
+        real = CategorizationDialog.exec_
+        CategorizationDialog.exec_ = lambda self: opened.append(len(self.transactions))
+        try:
+            WIDGET.prompt_for_new_transactions()
+        finally:
+            CategorizationDialog.exec_ = real
+        eq(len(opened), 1, "exactly one popup")
+        assert 0 < opened[0] <= 10, f"batch should be small, got {opened[0]}"
+    with_temp_db(body)
+
+
+def t_rev_each_transaction_is_asked_only_once():
+    from categorization_dialog import CategorizationDialog
+    def body():
+        seed_reviewable(4)
+        first = CategorizationDialog(limit=10)
+        shown = [first.transactions[0][0]]
+        quiet_completion(first.skip_transaction)   # now showing the second
+        shown.append(first.transactions[1][0])
+        again = CategorizationDialog(limit=10)
+        left = [t[0] for t in again.transactions]
+        for tid in shown:
+            assert tid not in left, f"{tid} was shown already and came back"
+        eq(len(left), 2)
+    with_temp_db(body)
+
+
+def t_rev_taught_merchants_are_applied_not_asked():
+    import categorizer
+    from categorization_dialog import CategorizationDialog
+    def body():
+        seed_reviewable(3)
+        categorizer.get_categorizer().learn_merchant_category(
+            'Merchant 1', 'groceries', True)
+        dialog = CategorizationDialog(limit=10)
+        ids = [t[0] for t in dialog.transactions]
+        assert 'r1' not in ids, "a taught merchant must not be asked about"
+        with database.get_db() as c:
+            row = c.execute("SELECT category, is_wasteful, reviewed, prompted"
+                            " FROM transactions WHERE id='r1'").fetchone()
+        eq((row['category'], row['is_wasteful'], row['reviewed'], row['prompted']),
+           ('groceries', 1, 1, 1))
+        with database.get_db() as c:
+            other = c.execute("SELECT reviewed FROM transactions WHERE id='r0'").fetchone()
+        eq(other['reviewed'], 0, "an untaught merchant must be left alone")
+    with_temp_db(body)
+
+
+def t_rev_prompted_column_migrates_from_reviewed_only_schema():
+    import sqlite3
+    path = sandbox_path('reviewed_only.db')
+    conn = sqlite3.connect(path)
+    conn.execute("""CREATE TABLE transactions (id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL, date DATE NOT NULL, name TEXT NOT NULL,
+        amount REAL NOT NULL, category TEXT, category_primary TEXT,
+        is_wasteful BOOLEAN DEFAULT 0, reviewed BOOLEAN DEFAULT 0,
+        created_at TIMESTAMP)""")
+    conn.execute("INSERT INTO transactions (id, account_id, date, name, amount, reviewed)"
+                 " VALUES ('done','a','2026-01-01','Seen',1,1)")
+    conn.execute("INSERT INTO transactions (id, account_id, date, name, amount, reviewed)"
+                 " VALUES ('todo','a','2026-01-02','Unseen',2,0)")
+    conn.commit(); conn.close()
+    original = database.DATABASE_PATH
+    database.DATABASE_PATH = path
+    try:
+        database.init_db()
+        database.init_db()   # harmless the second time
+        with database.get_db() as c:
+            got = {r['id']: r['prompted'] for r in
+                   c.execute("SELECT id, prompted FROM transactions")}
+        eq(got, {'done': 1, 'todo': 0}, "already-reviewed rows count as asked")
+    finally:
+        database.DATABASE_PATH = original
+
+
+def t_rev_tray_menu_still_answers_when_nothing_is_new():
+    from categorization_dialog import CategorizationDialog
+    def body():
+        seed_reviewable(2)
+        with database.get_db() as c:
+            c.execute("UPDATE transactions SET reviewed=1, prompted=1")
+            c.commit()
+        opened = []
+        real = CategorizationDialog.exec_
+        CategorizationDialog.exec_ = lambda self: opened.append(len(self.transactions))
+        try:
+            WIDGET.open_categorization_dialog()   # what the tray menu calls
+        finally:
+            CategorizationDialog.exec_ = real
+        eq(opened, [0], "the tray menu should show its 'all done' state, not nothing")
+    with_temp_db(body)
+
+
 WIDGET_TESTS = [
     ("widget: every stat renders", t_widget_renders_every_stat),
     ("widget: value stays centred at all sizes", t_widget_value_centred),
@@ -800,6 +1062,17 @@ WIDGET_TESTS = [
     ("position: releasing a drag saves the position", t_pos_drag_release_saves),
     ("position: a plain click does not save", t_pos_click_without_drag_does_not_save),
     ("position: survives a new settings instance", t_pos_round_trip_across_instances),
+    ("review: an old database gains the reviewed column, keeping rows", t_rev_migrates_existing_database),
+    ("review: re-syncing a transaction keeps the user's choices", t_rev_resync_keeps_user_choices),
+    ("review: dialog lists only not-yet-asked, newest first", t_rev_dialog_shows_only_unreviewed_newest_first),
+    ("review: dialog respects its limit", t_rev_dialog_respects_limit),
+    ("review: categorising marks reviewed; skipping still counts as asked", t_rev_categorizing_marks_reviewed_skip_does_not),
+    ("review: no popup when nothing is new", t_rev_prompt_silent_when_nothing_new),
+    ("review: startup popup opens once with a small batch", t_rev_prompt_opens_with_a_batch),
+    ("review: the tray menu still answers when nothing is new", t_rev_tray_menu_still_answers_when_nothing_is_new),
+    ("review: each transaction is asked about only once", t_rev_each_transaction_is_asked_only_once),
+    ("review: taught merchants are applied, not asked", t_rev_taught_merchants_are_applied_not_asked),
+    ("review: prompted column migrates from a reviewed-only database", t_rev_prompted_column_migrates_from_reviewed_only_schema),
 ]
 
 
