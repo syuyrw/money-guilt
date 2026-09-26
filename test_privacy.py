@@ -83,8 +83,19 @@ class IdleReading(unittest.TestCase):
 
 class AutoHide(unittest.TestCase):
     def state(self, idle, **kw):
+        # These tests are about how auto-hide behaves once it is on. It is off
+        # by default (the widget exists to keep the number in view), so switch
+        # it on here unless a test says otherwise.
+        kw.setdefault("auto_hide", True)
         self.idle = idle
         return PrivacyState(idle_fn=lambda: self.idle, **kw)
+
+    def test_auto_hide_is_off_by_default(self):
+        """A deliberate decision: nothing hides unless the user turns it on."""
+        default = PrivacyState(idle_fn=lambda: 99999)
+        self.assertFalse(default.auto_hide)
+        self.assertFalse(default.check_idle())
+        self.assertFalse(default.masked)
 
     def test_locks_once_idle_reaches_the_limit(self):
         s = self.state(299, idle_limit=300)
