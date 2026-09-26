@@ -7,6 +7,15 @@ from typing import Dict, List, Tuple, Optional
 
 # Category keywords - maps merchant keywords to spending categories
 CATEGORY_KEYWORDS = {
+    "fees": [
+        "overdraft", "nsf fee", "insufficient funds", "atm fee",
+        "atm surcharge", "late fee", "maintenance fee", "service charge",
+        "monthly fee", "interest charge", "finance charge"
+    ],
+    "convenience store": [
+        "7-eleven", "7 eleven", "circle k", "wawa", "sheetz", "quiktrip",
+        "casey's", "convenience", "kwik"
+    ],
     "eating out": [
         "restaurant", "cafe", "coffee", "pizza", "burger", "taco", "sushi",
         "doordash", "uber eats", "grubhub", "postmates", "diner", "grill",
@@ -31,7 +40,7 @@ CATEGORY_KEYWORDS = {
     "shopping": [
         "amazon", "ebay", "shop", "store", "mall", "retail", "clothing",
         "apparel", "fashion", "nike", "adidas", "gap", "h&m", "zara",
-        "uniqlo", "forever 21", "shein", "kohl's", "best buy", "apple"
+        "uniqlo", "forever 21", "shein", "temu", "aliexpress", "kohl's", "best buy", "apple"
     ],
     "transportation": [
         "uber", "lyft", "taxi", "cab", "gas", "fuel", "shell", "chevron",
@@ -60,11 +69,40 @@ CATEGORY_KEYWORDS = {
     ],
 }
 
-# Wasteful category keywords
-WASTEFUL_KEYWORDS = [
-    "delivery fee", "impulse", "fast food", "coffee", "snack", "candy",
-    "soda", "energy drink", "gambling", "casino", "lottery", "premium", "upgrade"
-]
+# Prior chance that spending in a category is waste. The numbers are a
+# ranking with a 0.5 cutoff, not measured rates: the surveys report how many
+# people name something as a source of waste, not what share of transactions
+# are. All are self-reported, online-panel results. Anything you teach the
+# app about a specific merchant overrides them.
+WASTE_PRIORS = {
+    "fees": 0.95,               # buys nothing; overdraft ~$27-31, ATM ~$4.86 (Bankrate 2025)
+    "convenience store": 0.6,   # 26% name it a source of waste (Motley Fool/Pollfish, Jan 2026)
+    "subscriptions": 0.45,      # 42% have paid for a forgotten one (C+R Research)
+    "shopping": 0.4,            # clothing/luxury is the most-regretted purchase, 19% (Omni, Jan 2026)
+    "entertainment": 0.4,       # experiences are regretted less than goods (Gilovich)
+    "eating out": 0.4,          # dining out is the #1 named waste at 31%, but a meal isn't waste itself
+}
+DEFAULT_WASTE_PRIOR = 0.1
+
+# Merchant cues that move the prior.
+DELIVERY_CUES = ["doordash", "uber eats", "ubereats", "grubhub", "postmates",
+                 "seamless", "caviar", "delivery"]          # 20% cite unneeded delivery orders (Motley Fool)
+MARKETPLACE_CUES = ["amazon", "temu", "shein", "ebay", "aliexpress"]  # online impulse buys, 26% (Motley Fool)
+STREAMING_CUES = ["netflix", "hulu", "disney", "hbo", "peacock", "paramount",
+                  "spotify", "apple music", "youtube premium"]  # unused streaming: 9-26% by generation
+FEE_CUES = CATEGORY_KEYWORDS["fees"]
+# Spending with little claim to be anything else. Kept from the original list
+# minus "coffee": lists of "money wasters" name it, but the latte-factor
+# critiques find skipping small treats rarely helps, so it's left to the prior.
+STRONG_WASTE_CUES = ["delivery fee", "impulse", "fast food", "snack", "candy",
+                     "soda", "energy drink", "gambling", "casino", "lottery",
+                     "premium", "upgrade"]
+WASTE_THRESHOLD = 0.5
+
+
+def _plain(text: str) -> str:
+    """Lower-case with apostrophes dropped, so "McDonald's" matches "mcdonalds"."""
+    return text.lower().replace("'", "").replace("\u2019", "")
 
 
 class TransactionCategorizer:
@@ -74,9 +112,9 @@ class TransactionCategorizer:
         # Build lowercase keyword maps
         self.categories = {}
         for category, keywords in CATEGORY_KEYWORDS.items():
-            self.categories[category] = [k.lower() for k in keywords]
+            self.categories[category] = [_plain(k) for k in keywords]
 
-        self.wasteful_keywords = [w.lower() for w in WASTEFUL_KEYWORDS]
+        self.wasteful_keywords = [w.lower() for w in STRONG_WASTE_CUES]
 
         # Learned merchant overrides from user manual categorizations
         self.overrides_file = overrides_file
@@ -154,9 +192,9 @@ class TransactionCategorizer:
                 return category
 
         # Score categories based on keywords
-        text_to_match = merchant_lower
+        text_to_match = _plain(merchant_lower)
         if description:
-            text_to_match += " " + description.lower()
+            text_to_match += " " + _plain(description)
 
         category_scores = {}
         for category, keywords in self.categories.items():
@@ -173,67 +211,60 @@ class TransactionCategorizer:
             return max(category_scores, key=category_scores.get)
         return "other"
 
+    def waste_score(self, merchant_name: str, category: str = None,
+                    description: str = None) -> float:
+        """Likelihood, 0 to 1, that a purchase is waste, from research priors.
+
+        Ignores anything the user has taught; is_wasteful applies that first.
+        """
+        if not merchant_name:
+            return 0.0
+
+        text = _plain(merchant_name)
+        if description:
+            text += " " + _plain(description)
+
+        if any(cue in text for cue in FEE_CUES):
+            return WASTE_PRIORS["fees"]
+
+        if not category:
+            category = self.categorize(merchant_name, description=description)
+        score = WASTE_PRIORS.get(category, DEFAULT_WASTE_PRIOR)
+
+        if any(cue in text for cue in STRONG_WASTE_CUES):
+            score += 0.6
+        if any(cue in text for cue in DELIVERY_CUES):
+            score += 0.35
+        if any(cue in text for cue in MARKETPLACE_CUES):
+            score += 0.15
+        if any(cue in text for cue in STREAMING_CUES):
+            score += 0.2
+        return min(score, 1.0)
+
     def is_wasteful(self, merchant_name: str, category: str = None,
                     description: str = None) -> bool:
         """
         Determine if a transaction is wasteful.
 
-        Priority:
-        1. User-learned merchant wasteful status
-        2. Keyword matching
-        3. Category-based rules
-        4. Default to False
+        1. What the user taught for this merchant, exact or partial
+        2. Otherwise the research-based score against WASTE_THRESHOLD
         """
         if not merchant_name:
             return False
 
         merchant_lower = merchant_name.lower()
 
-        # Check if we've learned this merchant's wasteful status
         if merchant_lower in self.merchant_wasteful:
             return self.merchant_wasteful[merchant_lower]
 
-        # Check partial merchant match. Returns the flag as taught, including
-        # a False: otherwise "Netflix" taught as not wasteful would fall
-        # through to the rules below, which call every subscription wasteful
-        # and would overrule the lesson for "Netflix.com Subscription".
+        # A partial match returns the flag as taught, including False, so a
+        # merchant taught as not wasteful isn't overruled by the score when
+        # it arrives as "Netflix.com Subscription".
         for learned_merchant, flag in self.merchant_wasteful.items():
             if learned_merchant in merchant_lower or merchant_lower in learned_merchant:
                 return flag
 
-        # Check wasteful keywords
-        text_to_match = merchant_lower
-        if description:
-            text_to_match += " " + description.lower()
-
-        for keyword in self.wasteful_keywords:
-            if keyword in text_to_match:
-                return True
-
-        # Category-based rules
-        if not category:
-            category = self.categorize(merchant_name, description=description)
-
-        if category:
-            # High-discretionary categories
-            wasteful_categories = {
-                "entertainment": 0.8,  # 80% of entertainment is wasteful
-                "eating out": 0.5,  # 50% of eating out (delivery, fast food)
-                "subscriptions": 0.9,  # 90% of subscriptions are wasteful
-                "shopping": 0.4,  # 40% of shopping is impulse
-            }
-
-            if category in wasteful_categories:
-                # Check specific merchants
-                if category == "eating out":
-                    if any(k in merchant_lower for k in ["delivery", "ubereats", "doordash", "grubhub"]):
-                        return True
-                elif category == "entertainment":
-                    return True
-                elif category == "subscriptions":
-                    return True
-
-        return False
+        return self.waste_score(merchant_name, category, description) >= WASTE_THRESHOLD
 
     def _score_category(self, text: str, keywords: List[str]) -> float:
         """Score how well text matches a category"""
@@ -273,7 +304,7 @@ class TransactionCategorizer:
     def get_category_suggestions(self, merchant_name: str,
                                 top_n: int = 3) -> List[Tuple[str, float]]:
         """Get top category suggestions with scores"""
-        text = merchant_name.lower()
+        text = _plain(merchant_name)
         scores = {}
 
         for category, keywords in self.categories.items():

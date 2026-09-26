@@ -283,6 +283,87 @@ def t_cat_word_boundary():
     assert c.categorize('Chevron Gas Station') in ('transportation', 'utilities')
 
 
+
+def t_cat_fees_flagged():
+    c = fresh_categorizer()
+    for name in ("Overdraft Fee", "ATM Fee", "Late Fee",
+                 "Monthly Maintenance Fee", "Interest Charge"):
+        eq(c.categorize(name), 'fees', name)
+        assert c.is_wasteful(name), name
+
+
+def t_cat_delivery_apps_flagged():
+    """Regression: 'ubereats' never matched the merchant text 'uber eats'."""
+    c = fresh_categorizer()
+    for name in ("Uber Eats", "DoorDash", "Grubhub", "Postmates"):
+        assert c.is_wasteful(name), name
+    assert not c.is_wasteful("Uber"), "a plain ride is not a delivery"
+
+
+def t_cat_convenience_flagged():
+    c = fresh_categorizer()
+    for name in ("7-Eleven", "Circle K", "Wawa", "Casey's General Store"):
+        eq(c.categorize(name), 'convenience store', name)
+        assert c.is_wasteful(name), name
+
+
+def t_cat_coffee_not_auto_flagged():
+    """Every coffee used to be flagged; the evidence on that is mixed."""
+    c = fresh_categorizer()
+    for name in ("Starbucks Coffee", "Blue Bottle Coffee", "Dunkin"):
+        assert not c.is_wasteful(name), name
+
+
+def t_cat_streaming_and_marketplaces_flagged():
+    c = fresh_categorizer()
+    for name in ("Netflix", "Spotify", "Hulu", "Amazon", "Temu"):
+        assert c.is_wasteful(name), name
+    for name in ("Adobe Creative Cloud", "Nike"):
+        assert not c.is_wasteful(name), name
+
+
+def t_cat_essentials_never_flagged():
+    c = fresh_categorizer()
+    for name in ("Rent Payment", "Whole Foods", "Safeway", "Comcast",
+                 "CVS Pharmacy", "Shell"):
+        assert not c.is_wasteful(name), name
+
+
+def t_cat_score_bounded():
+    c = fresh_categorizer()
+    for name in ("Casino delivery premium upgrade impulse", "Netflix Premium",
+                 "Overdraft Fee", "Rent", "", None, "x"):
+        score = c.waste_score(name)
+        assert 0.0 <= score <= 1.0, (name, score)
+
+
+def t_cat_priors_are_sane():
+    import categorizer
+    for category, prior in categorizer.WASTE_PRIORS.items():
+        assert 0.0 <= prior <= 1.0, category
+    alone = {k for k, v in categorizer.WASTE_PRIORS.items()
+             if v >= categorizer.WASTE_THRESHOLD}
+    eq(alone, {'fees', 'convenience store'},
+       "only fees and convenience stores are waste on category alone; "
+       "dining, shopping, entertainment and subscriptions need a cue")
+
+
+def t_cat_taught_beats_score():
+    c = fresh_categorizer()
+    c.learn_merchant_category('Uber Eats', 'eating out', False)
+    eq(c.is_wasteful('Uber Eats'), False, "taught not-wasteful must win")
+    c.learn_merchant_category('Whole Foods', 'groceries', True)
+    eq(c.is_wasteful('Whole Foods'), True, "taught wasteful must win")
+
+
+def t_cat_apostrophes_match():
+    """Regression: "McDonald's" fell through to 'other'."""
+    c = fresh_categorizer()
+    eq(c.categorize("McDonald's"), 'eating out')
+    eq(c.categorize("Wendy's"), 'eating out')
+    eq(c.categorize("Trader Joe's"), 'groceries')
+
+
 CATEGORIZER_TESTS = [
     ("cat: keyword matching", t_cat_keywords),
     ("cat: empty / None merchant", t_cat_empty_input),
@@ -299,6 +380,16 @@ CATEGORIZER_TESTS = [
     ("cat: corrupt overrides file degrades gracefully", t_cat_corrupt_file),
     ("cat: get_category_suggestions ranks", t_cat_suggestions),
     ("cat: word-boundary scoring", t_cat_word_boundary),
+    ("cat: fees are categorised and flagged", t_cat_fees_flagged),
+    ("cat: delivery apps flagged, including 'Uber Eats'", t_cat_delivery_apps_flagged),
+    ("cat: convenience stores categorised and flagged", t_cat_convenience_flagged),
+    ("cat: coffee shops are not auto-flagged", t_cat_coffee_not_auto_flagged),
+    ("cat: streaming and marketplaces flagged, work tools and apparel not", t_cat_streaming_and_marketplaces_flagged),
+    ("cat: essentials are never flagged", t_cat_essentials_never_flagged),
+    ("cat: waste score stays within 0 to 1", t_cat_score_bounded),
+    ("cat: only fees and convenience stores are waste on category alone", t_cat_priors_are_sane),
+    ("cat: a taught merchant beats the research score", t_cat_taught_beats_score),
+    ("cat: apostrophes do not break matching", t_cat_apostrophes_match),
 ]
 
 
