@@ -7,13 +7,14 @@ import logging
 import os
 import re
 
+import secure_store
+
 PORT = 5001
 # Only these Host headers are served. A web page can point its own domain at
 # 127.0.0.1 (DNS rebinding) and then talk to this server from the browser;
 # such requests still carry the attacker's hostname, so refusing unknown
 # hosts shuts that route.
 ALLOWED_HOSTS = {f"localhost:{PORT}", f"127.0.0.1:{PORT}"}
-TOKEN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'access_token.txt')
 PUBLIC_TOKEN_RE = re.compile(r'^public-(sandbox|development|production)-[0-9a-zA-Z-]{8,128}$')
 
 app = Flask(__name__, static_folder='static', static_url_path='/static')
@@ -60,11 +61,11 @@ def exchange_token():
     try:
         access_token = client.exchange_public_token(public_token)
 
-        # Save access token to file for testing
-        with open(TOKEN_FILE, 'w') as f:
-            f.write(access_token)
+        # Kept in the system keychain rather than a file on disk.
+        secure_store.set_access_token(access_token)
+        secure_store.harden_data_files()
 
-        logger.info("Successfully exchanged token. Access token saved.")
+        logger.info("Successfully exchanged token. Access token saved to the keychain.")
 
         # The access token is a live credential for the linked account and
         # must stay server-side. It is intentionally left out of this

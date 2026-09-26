@@ -1,28 +1,21 @@
 #!/usr/bin/env python3
 """Test Plaid integration with sandbox test token"""
 
-import os
+import secure_store
 from plaid_client import PlaidClient
 from datetime import datetime, timedelta
 
 
 def load_access_token():
-    """Token from PLAID_ACCESS_TOKEN or access_token.txt, never from source."""
-    token = os.getenv("PLAID_ACCESS_TOKEN")
+    """Token from the keychain (or PLAID_ACCESS_TOKEN), never from source."""
+    token = secure_store.get_access_token()
     if not token:
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "access_token.txt")
-        if os.path.exists(path):
-            with open(path) as fh:
-                token = fh.read().strip()
-    if not token:
-        raise SystemExit("No access token. Set PLAID_ACCESS_TOKEN, or link an account "
-                         "first (python link_app.py) to create access_token.txt.")
+        raise SystemExit("No access token. Link an account first "
+                         "(python link_app.py), or set PLAID_ACCESS_TOKEN.")
     return token
 
 
-def mask(token):
-    return token[:16] + "..." if token else "(none)"
-
+mask = secure_store.mask
 
 
 def test_with_sandbox_token():

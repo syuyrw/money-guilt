@@ -2,14 +2,18 @@
 
 Run with:  python -m unittest test_security -v
 
-Uses a fake Plaid client and a temp token file, so it never contacts Plaid and
-never touches the real access_token.txt.
+Uses a fake Plaid client and an in-memory keychain, so it never contacts Plaid
+and never touches the real Keychain or token file.
 """
 import os
 import re
 import sys
 import tempfile
 import unittest
+
+import keyring
+from keyring.backend import KeyringBackend
+from keyring.errors import PasswordDeleteError
 
 # Dummy credentials go in before the import so the real .env is never used
 # (load_dotenv does not override variables that are already set).
@@ -21,11 +25,32 @@ PROJECT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT)
 
 import link_app  # noqa: E402
+import secure_store  # noqa: E402
 
 LINK_TOKEN = 'link-sandbox-SECRET-LINK-TOKEN-0123456789'
 ACCESS_TOKEN = 'access-sandbox-SECRET-ACCESS-TOKEN-9876543210'
 PUBLIC_TOKEN = 'public-sandbox-abcdef12-3456-7890'
 LOCAL = 'http://localhost:5001'
+
+
+class MemoryKeyring(KeyringBackend):
+    """Stands in for the real Keychain so tests never touch it."""
+    priority = 1
+
+    def __init__(self):
+        super().__init__()
+        self.data = {}
+
+    def get_password(self, service, username):
+        return self.data.get((service, username))
+
+    def set_password(self, service, username, password):
+        self.data[(service, username)] = password
+
+    def delete_password(self, service, username):
+        if (service, username) not in self.data:
+            raise PasswordDeleteError()
+        del self.data[(service, username)]
 
 
 class FakePlaid:
@@ -50,16 +75,22 @@ class FakePlaid:
 class LinkServerSecurity(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix='link_sec_')
-        self.token_file = os.path.join(self.tmp, 'access_token.txt')
+        self.memory = MemoryKeyring()
+        self._orig_keyring = keyring.get_keyring()
+        self._orig_sensitive = secure_store.SENSITIVE_FILES
+        keyring.set_keyring(self.memory)
+        secure_store.SENSITIVE_FILES = [os.path.join(self.tmp, 'nothing.db')]
+        os.environ.pop('PLAID_ACCESS_TOKEN', None)
         self.fake = FakePlaid()
-        self._orig = (link_app.client, link_app.TOKEN_FILE)
+        self._orig_client = link_app.client
         link_app.client = self.fake
-        link_app.TOKEN_FILE = self.token_file
         link_app.app.config['TESTING'] = True
         self.http = link_app.app.test_client()
 
     def tearDown(self):
-        link_app.client, link_app.TOKEN_FILE = self._orig
+        link_app.client = self._orig_client
+        keyring.set_keyring(self._orig_keyring)
+        secure_store.SENSITIVE_FILES = self._orig_sensitive
 
     def post(self, body=None, **kwargs):
         return self.http.post('/api/exchange_token', base_url=LOCAL,
@@ -79,10 +110,20 @@ class LinkServerSecurity(unittest.TestCase):
         self.assertNotIn(ACCESS_TOKEN, res.get_data(as_text=True))
         self.assertNotIn('access_token', res.get_json())
 
-    def test_access_token_is_still_saved_server_side(self):
+    def test_access_token_is_saved_to_the_keychain_not_a_file(self):
         self.post({'public_token': PUBLIC_TOKEN})
-        with open(self.token_file) as fh:
-            self.assertEqual(fh.read(), ACCESS_TOKEN)
+        self.assertEqual(secure_store.get_access_token(), ACCESS_TOKEN)
+        self.assertEqual(os.listdir(self.tmp), [], 'no token file may be written')
+        self.assertFalse(os.path.exists(secure_store.LEGACY_TOKEN_FILE) and
+                         open(secure_store.LEGACY_TOKEN_FILE).read() == ACCESS_TOKEN,
+                         'the plaintext file must not receive the token')
+
+    def test_a_keychain_failure_is_reported_not_swallowed(self):
+        from keyring.backends.fail import Keyring as NoKeyring
+        keyring.set_keyring(NoKeyring())
+        res = self.post({'public_token': PUBLIC_TOKEN})
+        self.assertEqual(res.status_code, 400)
+        self.assertNotIn(ACCESS_TOKEN, res.get_data(as_text=True))
 
     def test_exchange_errors_hide_details_from_the_browser(self):
         self.fake.exchange_error = RuntimeError('request_id=SECRETDETAIL123')
