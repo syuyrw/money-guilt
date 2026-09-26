@@ -1,16 +1,17 @@
 import plaid
 from plaid.api import plaid_api
 import os
-from dotenv import load_dotenv
+import paths
 
-# Import credentials from .env
-load_dotenv()
+# Import credentials from the private data directory
+paths.load_env()
 
 client_id = os.getenv("PLAID_CLIENT_ID")
 secret = os.getenv("PLAID_SECRET")
 plaid_env = os.getenv("PLAID_ENV")
 
-print(client_id, secret, plaid_env)
+# Never print the secret itself.
+print('client_id set:', bool(client_id), '| secret set:', bool(secret), '| env:', plaid_env)
 
 configuration = plaid.Configuration(
     host=plaid.Environment.Sandbox,

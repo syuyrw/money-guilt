@@ -8,14 +8,14 @@ from plaid.model.accounts_get_request import AccountsGetRequest
 from plaid.model.country_code import CountryCode
 from plaid.model.products import Products
 import os
-from dotenv import load_dotenv
+import paths
 from datetime import datetime, timedelta
 import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-load_dotenv()
+paths.load_env()
 
 
 class PlaidClient:

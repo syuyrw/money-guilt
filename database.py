@@ -3,9 +3,11 @@ from datetime import datetime
 from contextlib import contextmanager
 import logging
 
+import paths
+
 logger = logging.getLogger(__name__)
 
-DATABASE_PATH = "money_guilt.db"
+DATABASE_PATH = paths.db_path()
 
 
 @contextmanager

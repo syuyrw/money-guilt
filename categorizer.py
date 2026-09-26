@@ -3,6 +3,8 @@
 import re
 import json
 import os
+
+import paths
 from typing import Dict, List, Tuple, Optional
 
 # Category keywords - maps merchant keywords to spending categories
@@ -108,7 +110,7 @@ def _plain(text: str) -> str:
 class TransactionCategorizer:
     """Categorize transactions with user learning capabilities"""
 
-    def __init__(self, overrides_file: str = "merchant_overrides.json"):
+    def __init__(self, overrides_file: str = None):
         # Build lowercase keyword maps
         self.categories = {}
         for category, keywords in CATEGORY_KEYWORDS.items():
@@ -117,7 +119,7 @@ class TransactionCategorizer:
         self.wasteful_keywords = [w.lower() for w in STRONG_WASTE_CUES]
 
         # Learned merchant overrides from user manual categorizations
-        self.overrides_file = overrides_file
+        self.overrides_file = overrides_file or paths.overrides_path()
         self.merchant_overrides, self.merchant_wasteful = self._load_overrides()
 
     def _load_overrides(self) -> Tuple[Dict[str, str], Dict[str, bool]]:

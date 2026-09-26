@@ -12,6 +12,8 @@ import stat
 import keyring
 from keyring.errors import KeyringError
 
+import paths
+
 SERVICE = "money_guilt"
 ACCOUNT = "plaid_access_token"
 
@@ -19,11 +21,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LEGACY_TOKEN_FILE = os.path.join(BASE_DIR, "access_token.txt")
 
 # Files that hold credentials or personal financial data.
-SENSITIVE_FILES = [
-    os.path.join(BASE_DIR, ".env"),
-    os.path.join(BASE_DIR, "money_guilt.db"),
-    os.path.join(BASE_DIR, "merchant_overrides.json"),
-]
+SENSITIVE_FILES = paths.private_paths()
 
 
 class SecureStoreError(RuntimeError):
