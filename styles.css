@@ -36,7 +36,7 @@ QLabel:focus {
 
 /* Section 3.2 - HEADLINE STYLE (Title) */
 #title_label {
-    color: rgba(255, 255, 255, 0.55);
+    color: rgba(255, 255, 255, 0.85);
     /* size set in scale_fonts_to_fit; a stylesheet
        font-size would override setFont */
     font-weight: 600;
