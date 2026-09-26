@@ -24,6 +24,22 @@ logger = logging.getLogger(__name__)
 WASTED_COLOR = "rgb(255, 100, 100)"
 
 
+class _DimOverlay(QWidget):
+    """Translucent dark veil over the widget; ignores the mouse."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.hide()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 150))
+        painter.drawRoundedRect(QRectF(self.rect()), 24, 24)
+
+
 class MoneyGuiltWidget(QWidget):
     """Desktop widget for Money Guilt spending tracker"""
 
@@ -54,6 +70,8 @@ class MoneyGuiltWidget(QWidget):
         self._value_lines = []
         self.init_ui()
         self.setup_timers()
+
+    _dim_overlay = None
 
     def init_ui(self):
         """Initialize the UI"""
@@ -356,8 +374,21 @@ class MoneyGuiltWidget(QWidget):
         dialog = CategorizationDialog(self, limit=limit)
         if only_if_new and not dialog.transactions:
             return
-        dialog.exec_()
+        self.set_dimmed(True)
+        try:
+            dialog.exec_()
+        finally:
+            self.set_dimmed(False)
         logger.info("Categorization dialog opened")
+
+    def set_dimmed(self, dimmed):
+        """Darken the widget while a modal window blocks it."""
+        if self._dim_overlay is None:
+            self._dim_overlay = _DimOverlay(self)
+        self._dim_overlay.setGeometry(self.rect())
+        self._dim_overlay.setVisible(dimmed)
+        if dimmed:
+            self._dim_overlay.raise_()
 
     def prompt_for_new_transactions(self):
         """Startup prompt: ask the user to categorize a few new transactions.
@@ -740,6 +771,8 @@ class MoneyGuiltWidget(QWidget):
     def resizeEvent(self, event):
         """Handle resize event - update rounded corners mask and scale fonts"""
         super().resizeEvent(event)
+        if self._dim_overlay is not None:
+            self._dim_overlay.setGeometry(self.rect())
         # Only update mask if not actively resizing from corners
         if not self.resize_corner:
             self.update_rounded_corners_mask()
