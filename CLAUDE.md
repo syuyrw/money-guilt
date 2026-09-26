@@ -21,7 +21,8 @@ A PyQt5 macOS menu-bar widget that shows rotating "guilt" stats about wasteful s
 - `./make_app.sh` builds and installs `/Applications/MoneyGuilt.app`. Re-run it if the project folder moves. Code changes only need the widget relaunched, not a rebuild.
 - A running widget keeps its old code. After changing code, tell the user to restart it, or restart it only if they say so. When restarting, kill only the widget's own processes; never `pkill` by a broad pattern like `Python.app`.
 - The widget allows only one instance (lock file in the temp folder).
-- Run the tests before committing: `python3 -m unittest test_app test_security test_paths test_secure_store`.
+- Run the tests before committing: `python3 test_app.py` (needs Qt, so the Homebrew Python) and `.venv/bin/python -m unittest test_security test_paths test_secure_store test_telemetry` (needs keyring/Flask, so the `.venv`).
+- Wasted-dollar reporting (`telemetry.py`, `collector/server.py`) is opt-in and sends only an anonymous install ID, the running total and a count. Never add merchants, dates or per-transaction amounts to the report. `python3 wasted_total.py` prints your local total; it is never shown in the widget.
 
 ## Behaviour decisions
 

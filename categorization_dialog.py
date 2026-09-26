@@ -7,6 +7,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
 import logging
 from database import get_db
+import telemetry
 from categorizer import get_categorizer, CATEGORY_KEYWORDS
 
 logger = logging.getLogger(__name__)
@@ -280,6 +281,7 @@ class CategorizationDialog(QDialog):
 
         self.categorized_count += 1
         self.apply_learned_categories()
+        telemetry.report_in_background()
         self.drop_learned_from_queue()
 
         # Move to next

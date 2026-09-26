@@ -220,6 +220,17 @@ def get_wasteful_spending(days=30):
         }
 
 
+def get_total_wasted():
+    """Total wasted dollars across every transaction, all time"""
+    with get_db() as conn:
+        row = conn.execute("""
+            SELECT SUM(amount) AS total, COUNT(*) AS count
+            FROM transactions
+            WHERE is_wasteful = 1 AND amount > 0
+        """).fetchone()
+    return {'total': row['total'] or 0, 'count': row['count'] or 0}
+
+
 def get_total_spending(days=30):
     """Get total spending (excluding income)"""
     with get_db() as conn:

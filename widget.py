@@ -13,6 +13,7 @@ from stats import get_random_stat, get_all_stats
 from categorization_dialog import CategorizationDialog
 from datetime import datetime
 from database import init_db
+import telemetry
 import privacy
 from app_icon import app_icon
 
@@ -924,6 +925,7 @@ def main():
         sys.exit(0)
 
     init_db()
+    telemetry.report_in_background()
 
     # Create and show widget
     widget = MoneyGuiltWidget()
