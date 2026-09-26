@@ -47,6 +47,10 @@ Sharing is on by default. You can turn it off at any time:
 
 Once off, no further reports are sent. Because the report is anonymous, turning sharing off does not remove a total you already sent. To have it deleted, contact the developer with your install ID (run `python3 telemetry.py status` to see it) and it will be removed.
 
+## Feedback
+
+**Send Feedback** in the menu bar opens a draft email to the developer in your own mail app. Money Guilt sends nothing itself and puts no spending data in the draft. What you write, and your email address, reach the developer only if you choose to send it.
+
 ## Plaid
 
 To read your transactions, Money Guilt uses [Plaid](https://plaid.com). When you link a bank account, you do so through Plaid's own screens, and Plaid handles your bank login: Money Guilt never sees your bank username or password. Plaid receives and processes your information under its own privacy policy, available at https://plaid.com/legal. Money Guilt receives an access token from Plaid that lets it read your transactions, and keeps it in your Keychain.

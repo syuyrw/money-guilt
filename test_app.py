@@ -1260,6 +1260,29 @@ def t_priv_tray_menu_has_the_privacy_actions():
     eq(WIDGET.auto_hide_action.isChecked(), WIDGET.privacy.auto_hide)
 
 
+from PyQt5.QtGui import QDesktopServices as WIDGET_MODULE_DESKTOP_SERVICES
+
+
+def t_feedback_menu_item_opens_a_mail_draft():
+    import feedback
+    from urllib.parse import urlparse, parse_qs
+    opened = []
+    original = WIDGET_MODULE_DESKTOP_SERVICES.openUrl
+    WIDGET_MODULE_DESKTOP_SERVICES.openUrl = staticmethod(lambda url: opened.append(url.toString()) or True)
+    try:
+        assert 'Feedback' in WIDGET.feedback_action.text()
+        WIDGET.feedback_action.trigger()
+    finally:
+        WIDGET_MODULE_DESKTOP_SERVICES.openUrl = original
+    eq(len(opened), 1)
+    parsed = urlparse(opened[0])
+    eq(parsed.scheme, 'mailto')
+    eq(parsed.path, feedback.FEEDBACK_EMAIL)
+    eq(parse_qs(parsed.query)['subject'], [feedback.SUBJECT])
+    assert not any(c.isdigit() for c in parse_qs(parsed.query)['body'][0]), \
+        "the draft must not carry spending figures"
+
+
 def t_priv_idle_timer_runs_twice_a_minute():
     eq(WIDGET.privacy_timer.interval(), 15000)
     assert WIDGET.privacy_timer.isActive()
@@ -1313,6 +1336,7 @@ WIDGET_TESTS = [
     ("privacy: the native capture call is skipped off cocoa", t_priv_capture_call_is_skipped_off_cocoa),
     ("privacy: the native capture call is made on cocoa", t_priv_capture_call_is_made_on_cocoa),
     ("privacy: the tray menu has the privacy actions", t_priv_tray_menu_has_the_privacy_actions),
+    ("feedback: the menu item opens a mail draft", t_feedback_menu_item_opens_a_mail_draft),
     ("privacy: the idle check runs twice a minute", t_priv_idle_timer_runs_twice_a_minute),
     ("review: taught merchants are applied, not asked", t_rev_taught_merchants_are_applied_not_asked),
     ("review: prompted column migrates from a reviewed-only database", t_rev_prompted_column_migrates_from_reviewed_only_schema),

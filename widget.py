@@ -7,13 +7,14 @@ import logging
 os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = '/usr/local/lib/python3.14/site-packages/PyQt5/Qt5/plugins'
 
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSystemTrayIcon, QMenu, QMessageBox
-from PyQt5.QtCore import Qt, QTimer, QSize, QPoint, QSettings, pyqtSignal, QRect, QRectF, QLockFile, QDir
-from PyQt5.QtGui import QFont, QFontMetrics, QCursor, QPainter, QPen, QColor, QBrush, QPixmap, QIcon, QPainterPath, QRegion, QLinearGradient
+from PyQt5.QtCore import QUrl, Qt, QTimer, QSize, QPoint, QSettings, pyqtSignal, QRect, QRectF, QLockFile, QDir
+from PyQt5.QtGui import QDesktopServices, QFont, QFontMetrics, QCursor, QPainter, QPen, QColor, QBrush, QPixmap, QIcon, QPainterPath, QRegion, QLinearGradient
 from stats import get_random_stat, get_all_stats
 from categorization_dialog import CategorizationDialog
 from datetime import datetime
 from database import init_db
 import telemetry
+import feedback
 import privacy
 from app_icon import app_icon
 
@@ -340,6 +341,11 @@ class MoneyGuiltWidget(QWidget):
 
         tray_menu.addSeparator()
 
+        self.feedback_action = tray_menu.addAction("Send Feedback…")
+        self.feedback_action.triggered.connect(self.send_feedback)
+
+        tray_menu.addSeparator()
+
         # Quit action
         quit_action = tray_menu.addAction("Quit Money Guilt")
         quit_action.triggered.connect(self.quit_app)
@@ -394,6 +400,13 @@ class MoneyGuiltWidget(QWidget):
         self._dim_overlay.setVisible(dimmed)
         if dimmed:
             self._dim_overlay.raise_()
+
+    def send_feedback(self):
+        """Open a feedback email draft in the user's mail app"""
+        if not QDesktopServices.openUrl(QUrl(feedback.feedback_url())):
+            QMessageBox.information(
+                self, "Send Feedback",
+                f"Couldn't open your mail app. Email {feedback.FEEDBACK_EMAIL} instead.")
 
     def show_sharing_notice(self):
         """Once, say what the anonymous total is and how to turn it off"""
