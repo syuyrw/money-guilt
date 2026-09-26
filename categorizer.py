@@ -151,6 +151,12 @@ class TransactionCategorizer:
         except Exception as e:
             print(f"Error saving overrides: {e}")
 
+    def forget_all(self):
+        """Discard every merchant lesson, in memory and on disk."""
+        self.merchant_overrides.clear()
+        self.merchant_wasteful.clear()
+        self._save_overrides()
+
     def learn_merchant_category(self, merchant_name: str, category: str, is_wasteful: bool = None):
         """
         Learn from user manual categorization.
