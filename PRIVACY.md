@@ -42,10 +42,18 @@ Reports are only sent when the developer has set up a collection server. If none
 Sharing is on by default. You can turn it off at any time:
 
 - click the Money Guilt icon in the menu bar and untick **Share Anonymous Wasted Total**, or
+- open **Settings…** from that same menu and untick **Share my anonymous wasted total**, or
 - click **Turn Off Sharing** in the notice shown the first time you open the app, or
 - run `python3 telemetry.py disable` in the project folder.
 
-Once off, no further reports are sent. Because the report is anonymous, turning sharing off does not remove a total you already sent. To have it deleted, contact the developer with your install ID (run `python3 telemetry.py status` to see it) and it will be removed.
+Once off, no further reports are sent. Turning sharing off does not by itself remove a total you already sent. To have it deleted:
+
+- open **Settings…** from the menu bar icon and click **Delete My Reported Data**, or
+- run `python3 telemetry.py delete` in the project folder.
+
+Either one removes your total from the server straight away, with no confirmation step, and turns sharing off so it isn't sent again. Your install ID is then discarded, so if you ever turn sharing back on it starts fresh and isn't linked to what you deleted. If the server can't be reached at that moment, Money Guilt remembers the request and retries it every 15 minutes while the app is running, and again each time it starts, until it goes through. Nothing is shared in the meantime.
+
+If you can't use the app, you can still contact the developer with your install ID (run `python3 telemetry.py status` to see it) and it will be removed.
 
 ## Feedback
 
@@ -63,7 +71,7 @@ Your data is protected by your Mac's own protections: file permissions that limi
 
 - **Stop sharing:** turn off sharing as described above.
 - **Delete your data:** quit the app and delete `~/Library/Application Support/MoneyGuilt` and `~/Library/Logs/MoneyGuilt.log`. Remove the Money Guilt entry from Keychain Access if you want the access token gone too. You can also revoke Money Guilt's connection to your bank through Plaid.
-- **Delete your shared total:** contact the developer, as described above.
+- **Delete your shared total:** use **Delete My Reported Data** in Settings, as described above.
 
 ## Children
 
