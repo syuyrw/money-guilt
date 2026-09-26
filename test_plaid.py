@@ -86,7 +86,7 @@ def test_plaid():
     print("=" * 60)
     print("✓ All tests passed!")
     print("=" * 60)
-    print(f"\nAccess token for future use: {access_token}")
+    print(f"\nAccess token obtained: {access_token[:16]}... (not shown in full)")
     print("Save this token to test other parts of the app.")
 
 if __name__ == "__main__":

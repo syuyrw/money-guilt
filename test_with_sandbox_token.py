@@ -1,25 +1,43 @@
 #!/usr/bin/env python3
 """Test Plaid integration with sandbox test token"""
 
+import os
 from plaid_client import PlaidClient
 from datetime import datetime, timedelta
 
-# Plaid provides test access tokens for sandbox testing
-# This is a test token that works in sandbox environment
-TEST_ACCESS_TOKEN = "access-sandbox-c9c140ab-0c32-48f1-8363-9d7af6624e89"
+
+def load_access_token():
+    """Token from PLAID_ACCESS_TOKEN or access_token.txt, never from source."""
+    token = os.getenv("PLAID_ACCESS_TOKEN")
+    if not token:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "access_token.txt")
+        if os.path.exists(path):
+            with open(path) as fh:
+                token = fh.read().strip()
+    if not token:
+        raise SystemExit("No access token. Set PLAID_ACCESS_TOKEN, or link an account "
+                         "first (python link_app.py) to create access_token.txt.")
+    return token
+
+
+def mask(token):
+    return token[:16] + "..." if token else "(none)"
+
+
 
 def test_with_sandbox_token():
     print("=" * 60)
     print("Testing Plaid Integration with Sandbox Token")
     print("=" * 60)
 
+    access_token = load_access_token()
     client = PlaidClient()
     print("✓ Plaid client initialized\n")
 
     # Test 1: Get accounts
     print("Step 1: Fetching accounts...")
     try:
-        accounts = client.get_accounts(TEST_ACCESS_TOKEN)
+        accounts = client.get_accounts(access_token)
         print(f"✓ Found {len(accounts)} account(s):\n")
         for account in accounts:
             print(f"  - {account.name} ({account.type})")
@@ -37,7 +55,7 @@ def test_with_sandbox_token():
         end_date = datetime.now().date()
         start_date = end_date - timedelta(days=30)
 
-        transactions = client.get_transactions(TEST_ACCESS_TOKEN, start_date, end_date)
+        transactions = client.get_transactions(access_token, start_date, end_date)
         print(f"✓ Found {len(transactions)} transaction(s):\n")
 
         # Group by category
@@ -67,7 +85,7 @@ def test_with_sandbox_token():
     print("=" * 60)
     print("✓ All tests passed!")
     print("=" * 60)
-    print(f"\nAccess token for future testing: {TEST_ACCESS_TOKEN}")
+    print(f"\nUsed access token: {mask(access_token)}")
 
 if __name__ == "__main__":
     test_with_sandbox_token()
