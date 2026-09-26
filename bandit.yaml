@@ -1,0 +1,3 @@
+# B311 flags random.choice(), which here only picks which stat to display;
+# nothing in this project uses randomness for security.
+skips: ['B311']
