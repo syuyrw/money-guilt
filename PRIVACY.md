@@ -71,7 +71,7 @@ If this policy changes in a way that affects what is collected, the update will 
 
 ## Contact
 
-Questions or deletion requests: [your contact email here]
+Questions or deletion requests: jordan@moneyguilt.com
 
 ---
 
