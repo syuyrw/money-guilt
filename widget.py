@@ -15,6 +15,7 @@ from datetime import datetime
 from database import init_db
 import telemetry
 import feedback
+from feedback_dialog import FeedbackDialog
 import privacy
 from app_icon import app_icon
 
@@ -402,7 +403,13 @@ class MoneyGuiltWidget(QWidget):
             self._dim_overlay.raise_()
 
     def send_feedback(self):
-        """Open a feedback email draft in the user's mail app"""
+        """Open the feedback form, or a mail draft if no collector is set up"""
+        if feedback.form_available():
+            dialog = FeedbackDialog(self)
+            if dialog.exec_() == FeedbackDialog.Accepted:
+                QMessageBox.information(self, "Send Feedback",
+                                        "Thanks! Your feedback was sent.")
+            return
         if not QDesktopServices.openUrl(QUrl(feedback.feedback_url())):
             QMessageBox.information(
                 self, "Send Feedback",

@@ -1265,6 +1265,8 @@ from PyQt5.QtGui import QDesktopServices as WIDGET_MODULE_DESKTOP_SERVICES
 
 def t_feedback_menu_item_opens_a_mail_draft():
     import feedback
+    original_form = feedback.form_available
+    feedback.form_available = lambda: False
     from urllib.parse import urlparse, parse_qs
     opened = []
     original = WIDGET_MODULE_DESKTOP_SERVICES.openUrl
@@ -1274,6 +1276,7 @@ def t_feedback_menu_item_opens_a_mail_draft():
         WIDGET.feedback_action.trigger()
     finally:
         WIDGET_MODULE_DESKTOP_SERVICES.openUrl = original
+        feedback.form_available = original_form
     eq(len(opened), 1)
     parsed = urlparse(opened[0])
     eq(parsed.scheme, 'mailto')
@@ -1281,6 +1284,43 @@ def t_feedback_menu_item_opens_a_mail_draft():
     eq(parse_qs(parsed.query)['subject'], [feedback.SUBJECT])
     assert not any(c.isdigit() for c in parse_qs(parsed.query)['body'][0]), \
         "the draft must not carry spending figures"
+
+
+def t_feedback_form_validates_then_sends():
+    import time
+    from feedback_dialog import FeedbackDialog
+    sent = []
+    dialog = FeedbackDialog(send=lambda m, r: sent.append((m, r)) or (True, None))
+    dialog.submit()
+    assert 'message' in dialog.status.text().lower(), dialog.status.text()
+    eq(sent, [])
+    dialog.message.setPlainText("Great widget")
+    dialog.reply_to.setText("bad")
+    dialog.submit()
+    assert 'email' in dialog.status.text().lower(), dialog.status.text()
+    eq(sent, [])
+    dialog.reply_to.setText("me@example.com")
+    dialog.submit()
+    for _ in range(50):
+        QT_APP.processEvents()
+        if dialog.result() == FeedbackDialog.Accepted:
+            break
+        time.sleep(0.02)
+    eq(sent, [("Great widget", "me@example.com")])
+    eq(dialog.result(), FeedbackDialog.Accepted)
+
+
+def t_feedback_form_shows_errors_and_allows_retry():
+    import time
+    from feedback_dialog import FeedbackDialog
+    dialog = FeedbackDialog(send=lambda m, r: (False, "Couldn't send it."))
+    dialog.message.setPlainText("hi")
+    dialog.submit()
+    for _ in range(50):
+        QT_APP.processEvents()
+        time.sleep(0.02)
+    eq(dialog.status.text(), "Couldn't send it.")
+    assert dialog.send_button.isEnabled(), "the user must be able to try again"
 
 
 def t_priv_idle_timer_runs_twice_a_minute():
@@ -1337,6 +1377,8 @@ WIDGET_TESTS = [
     ("privacy: the native capture call is made on cocoa", t_priv_capture_call_is_made_on_cocoa),
     ("privacy: the tray menu has the privacy actions", t_priv_tray_menu_has_the_privacy_actions),
     ("feedback: the menu item opens a mail draft", t_feedback_menu_item_opens_a_mail_draft),
+    ("feedback: the form validates, then sends", t_feedback_form_validates_then_sends),
+    ("feedback: a failed send shows why and can be retried", t_feedback_form_shows_errors_and_allows_retry),
     ("privacy: the idle check runs twice a minute", t_priv_idle_timer_runs_twice_a_minute),
     ("review: taught merchants are applied, not asked", t_rev_taught_merchants_are_applied_not_asked),
     ("review: prompted column migrates from a reviewed-only database", t_rev_prompted_column_migrates_from_reviewed_only_schema),

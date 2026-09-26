@@ -341,5 +341,88 @@ class Collector(unittest.TestCase):
         self.assertEqual(response.status_code, 413)
 
 
+class Feedback(unittest.TestCase):
+    def setUp(self):
+        import server
+        self.server = server
+        server.DB_PATH = os.path.join(tempfile.mkdtemp(), "f.db")
+        server._recent.clear()
+        self.sent_mail = []
+        server.send_email = lambda message, reply_to: self.sent_mail.append((message, reply_to)) or True
+        self.client = server.app.test_client()
+
+    def post(self, **body):
+        return self.client.post("/feedback", json=body)
+
+    def test_feedback_is_saved_and_emailed(self):
+        self.assertEqual(self.post(message="  Love it  ", reply_to="a@b.co").status_code, 200)
+        self.assertEqual(self.sent_mail, [("Love it", "a@b.co")])
+
+    def test_reply_address_is_optional(self):
+        self.assertEqual(self.post(message="hi").status_code, 200)
+        self.assertEqual(self.sent_mail, [("hi", "")])
+
+    def test_bad_feedback_is_rejected(self):
+        for body in ({}, {"message": ""}, {"message": "  "}, {"message": 5},
+                     {"message": "x" * 2001}, {"message": "hi", "reply_to": "nope"},
+                     {"message": "hi", "reply_to": "a@b.co\nBcc: x@y.co"},
+                     {"message": "hi", "reply_to": 5}):
+            self.assertEqual(self.post(**body).status_code, 400, body)
+        self.assertEqual(self.sent_mail, [])
+
+    def test_it_is_rate_limited(self):
+        codes = [self.post(message="hi").status_code for _ in range(7)]
+        self.assertEqual(codes, [200] * 5 + [429] * 2)
+
+    def test_an_email_failure_still_saves_the_message(self):
+        self.server.send_email = lambda message, reply_to: False
+        self.assertEqual(self.post(message="hi").status_code, 200)
+        with self.server._db() as conn:
+            row = conn.execute("SELECT message, emailed FROM feedback").fetchone()
+        self.assertEqual(row, ("hi", 0))
+
+    def test_no_smtp_settings_means_no_email_attempt(self):
+        import importlib
+        importlib.reload(self.server)
+        for name in ("SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD"):
+            os.environ.pop(name, None)
+        self.assertFalse(self.server.send_email("hi", ""))
+
+    def test_reports_stay_small_but_feedback_may_be_larger(self):
+        big = json.dumps({"message": "a" * 1500})
+        self.assertEqual(self.client.post("/feedback", data=big,
+                         content_type="application/json").status_code, 200)
+        self.assertEqual(self.client.post("/report", data=big,
+                         content_type="application/json").status_code, 413)
+
+
+class FeedbackClient(unittest.TestCase):
+    def setUp(self):
+        os.environ["MONEY_GUILT_COLLECTOR_URL"] = "https://collector.example"
+
+    def test_sends_message_and_optional_reply_address(self):
+        import feedback
+        seen = []
+        ok = feedback.send("  hello ", "a@b.co", post=lambda url, p: seen.append((url, p)) or True)
+        self.assertEqual(ok, (True, None))
+        self.assertEqual(seen, [("https://collector.example", {"message": "hello", "reply_to": "a@b.co"})])
+        seen.clear()
+        feedback.send("hello", "", post=lambda url, p: seen.append(p) or True)
+        self.assertEqual(seen, [{"message": "hello"}])
+
+    def test_validation_and_failures_give_a_message_not_an_exception(self):
+        import feedback
+        self.assertFalse(feedback.send("", "")[0])
+        self.assertFalse(feedback.send("hi", "not an email")[0])
+        def boom(url, payload):
+            raise OSError("down")
+        ok, error = feedback.send("hi", "", post=boom)
+        self.assertFalse(ok)
+        self.assertIn("connection", error)
+        del os.environ["MONEY_GUILT_COLLECTOR_URL"]
+        self.assertFalse(feedback.send("hi", "", post=lambda u, p: True)[0])
+        self.assertFalse(feedback.form_available())
+
+
 if __name__ == "__main__":
     unittest.main()

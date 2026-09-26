@@ -49,7 +49,7 @@ Once off, no further reports are sent. Because the report is anonymous, turning 
 
 ## Feedback
 
-**Send Feedback** in the menu bar opens a draft email to the developer in your own mail app. Money Guilt sends nothing itself and puts no spending data in the draft. What you write, and your email address, reach the developer only if you choose to send it.
+**Send Feedback** in the menu bar opens a short form. What you type, and your email address if you choose to give one so the developer can reply, are sent to the developer's server and emailed to the developer. Nothing else is included: no spending data, no install ID. Feedback is kept so it can be read and answered, and you can ask for yours to be deleted (see Contact). If the form isn't available, the menu opens a draft email in your own mail app instead, and nothing is sent unless you send it.
 
 ## Plaid
 
