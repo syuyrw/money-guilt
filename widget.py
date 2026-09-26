@@ -8,7 +8,7 @@ os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = '/usr/local/lib/python3.14/site-pack
 
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSystemTrayIcon, QMenu
 from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal, QRect, QRectF
-from PyQt5.QtGui import QFont, QFontMetrics, QCursor, QPainter, QPen, QColor, QBrush, QPixmap, QIcon, QPainterPath, QRegion
+from PyQt5.QtGui import QFont, QFontMetrics, QCursor, QPainter, QPen, QColor, QBrush, QPixmap, QIcon, QPainterPath, QRegion, QLinearGradient
 from stats import get_random_stat, get_all_stats
 from categorization_dialog import CategorizationDialog
 from datetime import datetime
@@ -176,18 +176,38 @@ class MoneyGuiltWidget(QWidget):
         self.update_footer()
 
     def paintEvent(self, event):
-        """Draw white border and rounded corners"""
+        """Draw the glass edge, a soft top sheen, and rounded corners"""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        # Draw dark grey border with rounded corners
-        pen = QPen(QColor(100, 100, 100), 1)
-        painter.setPen(pen)
-        painter.setBrush(Qt.NoBrush)
-
-        # Draw rounded rectangle border
         rect = self.rect()
-        painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), 24, 24)
+        radius = 24
+        outline = QPainterPath()
+        outline.addRoundedRect(QRectF(rect).adjusted(0.5, 0.5, -0.5, -0.5),
+                               radius, radius)
+
+        # Section 1.3 - LAYER 3 SPECULAR EDGE. A dim, fully-opaque grey
+        # (100,100,100) here used to be the only border ever drawn - the
+        # QSS "border: 5px solid white" never painted at all on a bare
+        # QWidget, so this flat grey line was doing all the work and read
+        # as a dull outline rather than a glass rim. A thin, translucent
+        # white edge matches how light catches a real glass surface.
+        painter.save()
+        painter.setClipPath(outline)
+
+        # Soft sheen along the top, fading out by the widget's midline -
+        # the light-catches-glass cue that makes the surface read as glass
+        # rather than flat plastic.
+        sheen = QLinearGradient(0, 0, 0, rect.height() * 0.55)
+        sheen.setColorAt(0.0, QColor(255, 255, 255, 20))
+        sheen.setColorAt(1.0, QColor(255, 255, 255, 0))
+        painter.fillRect(rect, sheen)
+
+        painter.restore()
+
+        painter.setPen(QPen(QColor(255, 255, 255, 40), 1))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawPath(outline)
 
         self._draw_ring(painter)
 
