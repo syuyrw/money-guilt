@@ -108,6 +108,58 @@ def get_top_wasteful_vendor():
     return None
 
 
+DELIVERY_MARKUP = 0.30
+DELIVERY_VENDORS = ["doordash", "uber eats", "ubereats", "grubhub", "postmates",
+                    "seamless", "caviar", "instacart", "gopuff"]
+
+
+def get_small_purchase_total(days=30, threshold=10):
+    """Sum and count of purchases under the threshold"""
+    from database import get_db
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT SUM(amount) as total, COUNT(*) as count
+            FROM transactions
+            WHERE amount > 0 AND amount < ?
+            AND date >= date('now', '-' || ? || ' days')
+        """, (threshold, days))
+        result = cursor.fetchone()
+    return {'total': result['total'] or 0, 'count': result['count'] or 0}
+
+
+def get_food_and_drink_projection(days=30):
+    """Food and drink spending over the last `days`, scaled to a full year"""
+    from database import get_db
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT SUM(amount) as total
+            FROM transactions
+            WHERE amount > 0
+            AND (category_primary = 'FOOD_AND_DRINK' OR category = 'eating out')
+            AND date >= date('now', '-' || ? || ' days')
+        """, (days,))
+        total = cursor.fetchone()['total'] or 0
+    return {'month': total, 'year': total * 365 / days}
+
+
+def get_delivery_markup(days=30):
+    """Delivery-app spending and the estimated markup paid on it"""
+    from database import get_db
+    clause = " OR ".join("LOWER(name) LIKE ?" for _ in DELIVERY_VENDORS)
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            SELECT SUM(amount) as total
+            FROM transactions
+            WHERE amount > 0 AND ({clause})
+            AND date >= date('now', '-' || ? || ' days')
+        """, [f"%{v}%" for v in DELIVERY_VENDORS] + [days])
+        total = cursor.fetchone()['total'] or 0
+    return {'spent': total, 'markup': total * DELIVERY_MARKUP}
+
+
 def get_vacation_suggestion(year_wasted):
     """Get a vacation suggestion based on wasted money"""
     # Find vacations they could afford
@@ -206,6 +258,45 @@ def generate_stats_list():
             'wasted_text': f"${vendor['total']:.2f}",
             'data': vendor
         })
+
+    # Stat 7: Small purchases this month
+    small = get_small_purchase_total()
+    if small['total'] > 0:
+        stats.append({
+            'type': 'small_purchases',
+            'title': 'Purchases Under $10 This Month',
+            'value': f"${small['total']:.2f}",
+            'subtitle': f"across {small['count']} small purchases",
+            'wasted_text': f"${small['total']:.2f}",
+            'data': small
+        })
+
+    # Stat 8: Food and drink, annualized
+    food = get_food_and_drink_projection()
+    if food['month'] > 0:
+        stats.append({
+            'type': 'food_yearly_projection',
+            'title': 'Food & Drink Per Year',
+            'value': f"${food['year']:.2f}",
+            'subtitle': f"at this month's ${food['month']:.2f} pace",
+            'wasted_text': f"${food['year']:.2f}",
+            'data': food
+        })
+
+    # Stat 9: Delivery markup
+    delivery = get_delivery_markup()
+    if delivery['markup'] > 0:
+        stats.append({
+            'type': 'delivery_markup',
+            'title': 'Paid Just to Not Go Get It',
+            'value': f"${delivery['markup']:.2f}",
+            'subtitle': f"est. {DELIVERY_MARKUP:.0%} markup on ${delivery['spent']:.2f} of delivery",
+            'wasted_text': f"${delivery['markup']:.2f}",
+            'data': delivery
+        })
+
+    from stats_more import generate_more_stats
+    stats.extend(generate_more_stats())
 
     return stats if stats else [get_no_data_stat()]
 
