@@ -301,7 +301,14 @@ class MoneyGuiltWidget(QWidget):
         icon_painter.drawText(icon_pixmap.rect(), Qt.AlignCenter, "$")
         icon_painter.end()
 
-        self.tray_icon.setIcon(QIcon(icon_pixmap))
+        icon = QIcon(icon_pixmap)
+        # Marks the icon as a macOS template image: only its shape (alpha)
+        # is used and the system tints it itself - white on a dark menu bar,
+        # black on a light one, updating live as the bar changes. A fixed
+        # black fill was invisible on dark backgrounds, and the app has no
+        # way to read the pixels behind the menu bar to pick a colour itself.
+        icon.setIsMask(True)
+        self.tray_icon.setIcon(icon)
         self.tray_icon.show()
 
         logger.info("System tray icon created")

@@ -652,6 +652,19 @@ def t_pos_round_trip_across_instances():
         WIDGET.settings = original
 
 
+
+def t_tray_icon_is_template():
+    """A fixed-colour icon vanishes on a dark menu bar; a template image is
+    tinted by macOS to suit whichever bar it is on."""
+    icon = WIDGET.tray_icon.icon()
+    assert not icon.isNull(), "tray icon missing"
+    assert icon.isMask(), "tray icon must be a template (mask) image"
+    img = icon.pixmap(44, 44).toImage()
+    opaque = sum(1 for x in range(img.width()) for y in range(img.height())
+                 if img.pixelColor(x, y).alpha() > 128)
+    assert opaque > 40, f"icon looks empty ({opaque} opaque pixels)"
+
+
 WIDGET_TESTS = [
     ("widget: every stat renders", t_widget_renders_every_stat),
     ("widget: value stays centred at all sizes", t_widget_value_centred),
@@ -667,6 +680,7 @@ WIDGET_TESTS = [
     ("widget: minimum size enforced", t_widget_minimum_size),
     ("widget: corner hit-testing", t_widget_corner_hit_testing),
     ("widget: footer timestamp", t_widget_footer),
+    ("widget: tray icon is a template image", t_tray_icon_is_template),
     ("position: default when nothing is saved", t_pos_default_when_nothing_saved),
     ("position: a saved position is restored", t_pos_restores_saved),
     ("position: an off-screen saved position falls back to default", t_pos_offscreen_falls_back),
