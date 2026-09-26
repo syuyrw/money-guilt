@@ -5,3 +5,4 @@ merchant_overrides.json
 __pycache__/
 *.pyc
 .venv/
+MoneyGuilt*.app/
