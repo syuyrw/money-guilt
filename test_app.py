@@ -1037,6 +1037,234 @@ def t_rev_tray_menu_still_answers_when_nothing_is_new():
     with_temp_db(body)
 
 
+# ----------------------------------------------------------------- privacy
+FAKE_IDLE = [0]
+
+
+def with_privacy(fn, **state):
+    """Run fn against a fresh PrivacyState whose idle time the test controls."""
+    import privacy
+    original = WIDGET.privacy
+    FAKE_IDLE[0] = 0
+    WIDGET.privacy = privacy.PrivacyState(idle_fn=lambda: FAKE_IDLE[0], **state)
+    try:
+        fn()
+    finally:
+        WIDGET.privacy = original
+        WIDGET.refresh_display()
+        QT_APP.processEvents()
+
+
+def click():
+    """A plain left click, as the widget receives it."""
+    from PyQt5.QtCore import QPointF, QEvent, Qt as QtC
+    from PyQt5.QtGui import QMouseEvent
+    WIDGET.is_dragging = False
+    WIDGET.resize_corner = None
+    WIDGET.mouseReleaseEvent(QMouseEvent(
+        QEvent.MouseButtonRelease, QPointF(60, 60),
+        QtC.LeftButton, QtC.NoButton, QtC.NoModifier))
+    QT_APP.processEvents()
+
+
+PERCENT_STAT = {'type': 'wasted_percentage', 'title': 'Percent of Spending Wasted',
+                'value': '98.5%', 'subtitle': 'Out of $352.38 total spending',
+                'wasted_text': None, 'data': {'percentage': 98.5}}
+
+
+def t_priv_masks_value_subtitle_and_ring():
+    import privacy
+    def body():
+        show(PERCENT_STAT)
+        assert '98.5' in WIDGET.value_label.text()
+        eq(WIDGET.ring_percentage, 98.5)
+        WIDGET.privacy.manual = True
+        WIDGET.refresh_display()
+        eq(WIDGET.value_label.text(), privacy.MASK)
+        eq(WIDGET.ring_percentage, 0, "the arc would give the percentage away")
+        assert not any(c.isdigit() for c in WIDGET.subtitle_label.text()), \
+            WIDGET.subtitle_label.text()
+        eq(WIDGET.title_label.text(), 'Percent of Spending Wasted')
+        WIDGET.privacy.manual = False
+        WIDGET.refresh_display()
+        assert '98.5' in WIDGET.value_label.text(), "unmasking restores the figure"
+    with_privacy(body)
+
+
+def t_priv_no_digit_survives_on_any_stat():
+    def body():
+        for stat in EVERY_STAT:
+            show(stat)
+            for label in (WIDGET.value_label, WIDGET.subtitle_label):
+                assert not any(c.isdigit() for c in label.text()), \
+                    (stat['type'], label.text())
+    with_privacy(body, manual=True)
+
+
+def t_priv_masked_amounts_are_not_red():
+    def body():
+        show({'type': 'wasted_year', 'title': 'T', 'value': '$9.99',
+              'subtitle': '', 'wasted_text': '$9.99', 'data': {}})
+        assert '255, 100, 100' not in WIDGET.value_label.text()
+    with_privacy(body, manual=True)
+
+
+def t_priv_two_line_vendor_collapses_to_one_mask():
+    def body():
+        show({'type': 'top_wasteful_vendor', 'title': 'Biggest Waste Vendor',
+              'value': 'SparkFun', 'value_extra': '$268.20',
+              'wasted_text': '$268.20', 'subtitle': 'wasted over 3 purchases',
+              'data': {}})
+        eq(len(WIDGET._value_lines), 1)
+        assert 'SparkFun' not in WIDGET.value_label.text(), "the name is revealing too"
+    with_privacy(body, manual=True)
+
+
+def t_priv_stays_centred_while_masked():
+    def body():
+        for size in [(350, 170), (280, 140)]:
+            WIDGET.resize(*size)
+            QT_APP.processEvents()
+            for stat in EVERY_STAT:
+                show(stat)
+                box = WIDGET.value_label.geometry()
+                offset = (box.y() + box.height() / 2) - WIDGET.height() / 2
+                assert abs(offset) <= 3, (size, stat['type'], offset)
+        WIDGET.resize(350, 170)
+        QT_APP.processEvents()
+    with_privacy(body, manual=True)
+
+
+def t_priv_idle_lock_activity_does_not_reveal():
+    import privacy
+    def body():
+        show(PERCENT_STAT)
+        FAKE_IDLE[0] = 400
+        WIDGET._check_idle()
+        eq(WIDGET.value_label.text(), privacy.MASK)
+        FAKE_IDLE[0] = 0            # someone bumps the mouse
+        WIDGET._check_idle()
+        eq(WIDGET.value_label.text(), privacy.MASK, "activity alone must not reveal")
+    with_privacy(body, auto_hide=True, idle_limit=300)
+
+
+def t_priv_click_reveals_without_advancing():
+    def body():
+        show(PERCENT_STAT)
+        FAKE_IDLE[0] = 400
+        WIDGET._check_idle()
+        click()
+        assert not WIDGET.privacy.masked, "the click should reveal"
+        assert WIDGET.current_stat is PERCENT_STAT, "the reveal click must not advance"
+        assert '98.5' in WIDGET.value_label.text()
+        click()                      # now unlocked, a click advances as before
+        assert WIDGET.current_stat is not PERCENT_STAT
+    with_privacy(body, auto_hide=True, idle_limit=300)
+
+
+def t_priv_click_does_not_undo_manual_hiding():
+    import privacy
+    def body():
+        show(PERCENT_STAT)
+        FAKE_IDLE[0] = 400
+        WIDGET._check_idle()          # locked as well as manually hidden
+        click()
+        eq(WIDGET.value_label.text(), privacy.MASK, "manual hiding must survive the click")
+        assert WIDGET.privacy.manual
+    with_privacy(body, manual=True, auto_hide=True, idle_limit=300)
+
+
+def t_priv_settings_persist():
+    original = (WIDGET.privacy.manual, WIDGET.privacy.auto_hide, WIDGET.hide_from_capture)
+    try:
+        WIDGET.set_manual_privacy(True)
+        WIDGET.set_auto_hide(False)
+        WIDGET.set_hide_from_capture(False)
+        st = WIDGET.settings
+        eq(st.value("privacy/manual", type=bool), True)
+        eq(st.value("privacy/auto_hide", type=bool), False)
+        eq(st.value("privacy/hide_from_capture", type=bool), False)
+        WIDGET.set_manual_privacy(False)
+        eq(st.value("privacy/manual", type=bool), False)
+    finally:
+        WIDGET.set_manual_privacy(original[0])
+        WIDGET.set_auto_hide(original[1])
+        WIDGET.set_hide_from_capture(original[2])
+
+
+def t_priv_a_new_widget_reads_the_saved_settings():
+    from PyQt5.QtCore import QSettings
+    import widget
+    st = QSettings(sandbox_path('priv_boot.ini'), QSettings.IniFormat)
+    st.setValue("privacy/manual", True)
+    st.setValue("privacy/auto_hide", False)
+    st.setValue("privacy/idle_minutes", 2)
+    st.setValue("privacy/hide_from_capture", False)
+    other = widget.MoneyGuiltWidget(settings=st)
+    try:
+        eq(other.privacy.manual, True)
+        eq(other.privacy.auto_hide, False)
+        eq(other.privacy.idle_limit, 120)
+        eq(other.hide_from_capture, False)
+        eq(other.hide_amounts_action.isChecked(), True)
+        eq(other.capture_action.isChecked(), False)
+    finally:
+        other.tray_icon.hide()
+
+
+def t_priv_defaults_are_the_safe_ones():
+    from PyQt5.QtCore import QSettings
+    import widget
+    other = widget.MoneyGuiltWidget(settings=QSettings(
+        sandbox_path('priv_defaults.ini'), QSettings.IniFormat))
+    try:
+        eq(other.privacy.manual, False)
+        eq(other.privacy.auto_hide, True, "auto-hide is on by default")
+        eq(other.privacy.idle_limit, 300, "five minutes")
+        eq(other.hide_from_capture, True, "capture exclusion is on by default")
+    finally:
+        other.tray_icon.hide()
+
+
+def t_priv_capture_call_is_skipped_off_cocoa():
+    """The native call needs a real NSView; elsewhere it could crash."""
+    from unittest import mock
+    import privacy
+    with mock.patch.object(privacy, 'set_capture_excluded') as native:
+        eq(WIDGET.apply_capture_exclusion(), False)
+        native.assert_not_called()
+
+
+def t_priv_capture_call_is_made_on_cocoa():
+    from unittest import mock
+    import privacy
+    from PyQt5.QtWidgets import QApplication
+    original = WIDGET.hide_from_capture
+    try:
+        with mock.patch.object(QApplication, 'platformName', return_value='cocoa'), \
+             mock.patch.object(privacy, 'set_capture_excluded', return_value=True) as native:
+            WIDGET.hide_from_capture = True
+            eq(WIDGET.apply_capture_exclusion(), True)
+            native.assert_called_with(int(WIDGET.winId()), True)
+            WIDGET.set_hide_from_capture(False)
+            native.assert_called_with(int(WIDGET.winId()), False)
+    finally:
+        WIDGET.set_hide_from_capture(original)
+
+
+def t_priv_tray_menu_has_the_privacy_actions():
+    for action in (WIDGET.hide_amounts_action, WIDGET.auto_hide_action,
+                   WIDGET.capture_action):
+        assert action.isCheckable()
+    assert 'Screenshots' in WIDGET.capture_action.text()
+    eq(WIDGET.auto_hide_action.isChecked(), WIDGET.privacy.auto_hide)
+
+
+def t_priv_idle_timer_runs_twice_a_minute():
+    eq(WIDGET.privacy_timer.interval(), 15000)
+    assert WIDGET.privacy_timer.isActive()
+
+
 WIDGET_TESTS = [
     ("widget: every stat renders", t_widget_renders_every_stat),
     ("widget: value stays centred at all sizes", t_widget_value_centred),
@@ -1071,6 +1299,21 @@ WIDGET_TESTS = [
     ("review: startup popup opens once with a small batch", t_rev_prompt_opens_with_a_batch),
     ("review: the tray menu still answers when nothing is new", t_rev_tray_menu_still_answers_when_nothing_is_new),
     ("review: each transaction is asked about only once", t_rev_each_transaction_is_asked_only_once),
+    ("privacy: masking hides the value, subtitle figures and the ring arc", t_priv_masks_value_subtitle_and_ring),
+    ("privacy: no digit survives on any stat while masked", t_priv_no_digit_survives_on_any_stat),
+    ("privacy: masked amounts are not highlighted red", t_priv_masked_amounts_are_not_red),
+    ("privacy: a vendor and its amount collapse to one mask", t_priv_two_line_vendor_collapses_to_one_mask),
+    ("privacy: the value stays centred while masked", t_priv_stays_centred_while_masked),
+    ("privacy: activity alone does not reveal after an idle lock", t_priv_idle_lock_activity_does_not_reveal),
+    ("privacy: a click reveals after an idle lock without advancing", t_priv_click_reveals_without_advancing),
+    ("privacy: a click does not undo manual hiding", t_priv_click_does_not_undo_manual_hiding),
+    ("privacy: settings persist", t_priv_settings_persist),
+    ("privacy: a new widget reads the saved settings", t_priv_a_new_widget_reads_the_saved_settings),
+    ("privacy: defaults are the safe ones", t_priv_defaults_are_the_safe_ones),
+    ("privacy: the native capture call is skipped off cocoa", t_priv_capture_call_is_skipped_off_cocoa),
+    ("privacy: the native capture call is made on cocoa", t_priv_capture_call_is_made_on_cocoa),
+    ("privacy: the tray menu has the privacy actions", t_priv_tray_menu_has_the_privacy_actions),
+    ("privacy: the idle check runs twice a minute", t_priv_idle_timer_runs_twice_a_minute),
     ("review: taught merchants are applied, not asked", t_rev_taught_merchants_are_applied_not_asked),
     ("review: prompted column migrates from a reviewed-only database", t_rev_prompted_column_migrates_from_reviewed_only_schema),
 ]

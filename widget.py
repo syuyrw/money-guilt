@@ -13,6 +13,7 @@ from stats import get_random_stat, get_all_stats
 from categorization_dialog import CategorizationDialog
 from datetime import datetime
 from database import init_db
+import privacy
 from app_icon import app_icon
 
 logging.basicConfig(level=logging.INFO)
@@ -31,6 +32,14 @@ class MoneyGuiltWidget(QWidget):
         super().__init__()
         # Injectable so tests never touch the user's real saved position.
         self.settings = settings or QSettings("MoneyGuilt", "MoneyGuiltWidget")
+        self.privacy = privacy.PrivacyState(
+            manual=self.settings.value("privacy/manual", False, type=bool),
+            auto_hide=self.settings.value("privacy/auto_hide", True, type=bool),
+            idle_limit=self.settings.value("privacy/idle_minutes", 5, type=int) * 60)
+        # On by default: the widget stays out of screenshots and screen shares
+        # unless you turn that off from the tray menu.
+        self.hide_from_capture = self.settings.value(
+            "privacy/hide_from_capture", True, type=bool)
         self.current_stat = None
         self.stats = []
         self.current_stat_index = 0
@@ -283,6 +292,24 @@ class MoneyGuiltWidget(QWidget):
 
         tray_menu.addSeparator()
 
+        # Privacy: the widget sits on screen showing spending
+        self.hide_amounts_action = tray_menu.addAction("Hide Amounts")
+        self.hide_amounts_action.setCheckable(True)
+        self.hide_amounts_action.setChecked(self.privacy.manual)
+        self.hide_amounts_action.toggled.connect(self.set_manual_privacy)
+
+        self.auto_hide_action = tray_menu.addAction("Auto-Hide When Idle")
+        self.auto_hide_action.setCheckable(True)
+        self.auto_hide_action.setChecked(self.privacy.auto_hide)
+        self.auto_hide_action.toggled.connect(self.set_auto_hide)
+
+        self.capture_action = tray_menu.addAction("Hide From Screenshots && Sharing")
+        self.capture_action.setCheckable(True)
+        self.capture_action.setChecked(self.hide_from_capture)
+        self.capture_action.toggled.connect(self.set_hide_from_capture)
+
+        tray_menu.addSeparator()
+
         # Categorize transactions
         categorize_action = tray_menu.addAction("Categorize Transactions")
         categorize_action.triggered.connect(lambda: self.open_categorization_dialog())
@@ -371,6 +398,51 @@ class MoneyGuiltWidget(QWidget):
             return pos
         return self.default_position()
 
+    def refresh_display(self):
+        """Redraw the current stat, e.g. after privacy changes."""
+        if self.current_stat is not None:
+            self.display_stat(self.current_stat)
+
+    def _check_idle(self):
+        if self.privacy.check_idle():
+            logger.info("Amounts hidden after inactivity")
+            self.refresh_display()
+
+    def set_manual_privacy(self, enabled):
+        self.privacy.manual = bool(enabled)
+        self.settings.setValue("privacy/manual", bool(enabled))
+        self.settings.sync()
+        self.refresh_display()
+
+    def set_auto_hide(self, enabled):
+        self.privacy.set_auto_hide(bool(enabled))
+        self.settings.setValue("privacy/auto_hide", bool(enabled))
+        self.settings.sync()
+        self.refresh_display()
+
+    def set_hide_from_capture(self, enabled):
+        self.hide_from_capture = bool(enabled)
+        self.settings.setValue("privacy/hide_from_capture", bool(enabled))
+        self.settings.sync()
+        self.apply_capture_exclusion()
+
+    def apply_capture_exclusion(self):
+        """Ask macOS to leave this window out of screenshots and screen sharing.
+
+        Only on the real macOS platform plugin: the native call needs a genuine
+        NSView, and any other plugin hands back something that is not one.
+        """
+        if QApplication.platformName() != "cocoa":
+            return False
+        applied = privacy.set_capture_excluded(int(self.winId()), self.hide_from_capture)
+        if not applied:
+            logger.warning("Could not change screen-capture exclusion")
+        return applied
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.apply_capture_exclusion()
+
     def hideEvent(self, event):
         """Remember where the widget was whenever it is hidden or closed."""
         self.save_position()
@@ -433,6 +505,11 @@ class MoneyGuiltWidget(QWidget):
         self.update_timer.timeout.connect(self.update_footer)
         self.update_timer.start(60000)  # 1 minute
 
+        # Check for inactivity twice a minute
+        self.privacy_timer = QTimer()
+        self.privacy_timer.timeout.connect(self._check_idle)
+        self.privacy_timer.start(15000)
+
         logger.info("Timers started: stat rotation every hour")
 
     def advance_stat(self):
@@ -476,10 +553,19 @@ class MoneyGuiltWidget(QWidget):
             # tight opening.
             value_text = value_text.rstrip('%')
 
+        masked = self.privacy.masked
+        value_extra = stat.get('value_extra')
+        if masked:
+            # The whole value goes, not just its digits: a merchant or trip
+            # name says as much about spending as the amount does.
+            value_text = privacy.MASK
+            value_extra = None
+            subtitle = privacy.mask_numbers(subtitle)
+
         # A dollar figure is only reddened when the stat says it represents
         # waste. The percentage stat's subtitle also carries a figure, but
         # that one is total spending, so it stays in the normal colour.
-        wasted_text = stat.get('wasted_text')
+        wasted_text = None if masked else stat.get('wasted_text')
 
         self.title_label.setText(stat.get('title', ''))
 
@@ -487,8 +573,8 @@ class MoneyGuiltWidget(QWidget):
         # vendor's size. Lines are kept in plain form for measurement, since
         # the label's own text is markup once a line is coloured.
         self._value_lines = [value_text]
-        if stat.get('value_extra'):
-            self._value_lines.append(str(stat['value_extra']))
+        if value_extra:
+            self._value_lines.append(str(value_extra))
 
         rendered = []
         for line in self._value_lines:
@@ -510,7 +596,8 @@ class MoneyGuiltWidget(QWidget):
         # The percentage stat draws a ring around the value instead of
         # filling a chart row.
         if stat.get('type') == 'wasted_percentage':
-            self.ring_percentage = stat.get('data', {}).get('percentage', 0)
+            # An empty ring while masked: the arc would give the percentage away.
+            self.ring_percentage = 0 if masked else stat.get('data', {}).get('percentage', 0)
         else:
             self.ring_percentage = None
         self.chart_label.hide()
@@ -610,8 +697,15 @@ class MoneyGuiltWidget(QWidget):
                 # Update mask after resize complete
                 self.update_rounded_corners_mask()
             elif not self.is_dragging:
-                # Single click - advance stat
-                self.show_next_stat()
+                if self.privacy.idle_locked:
+                    # Hidden because nobody was here: this click is the
+                    # deliberate act that brings the amounts back, so it
+                    # does not also skip to the next stat.
+                    self.privacy.reveal()
+                    self.refresh_display()
+                else:
+                    # Single click - advance stat
+                    self.show_next_stat()
             self.drag_position = None
             self.is_dragging = False
             if moved:
