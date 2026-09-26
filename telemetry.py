@@ -176,7 +176,7 @@ def _finish_delete(post):
     return "pending"
 
 
-def delete_reported_data(post=_post_delete):
+def delete_reported_data(post=None):
     """Erase what this install reported, and stop sharing.
 
     Sharing is switched off first and stays off. Otherwise, with sharing on by
@@ -189,17 +189,28 @@ def delete_reported_data(post=_post_delete):
     config = load_config()
     config["enabled"] = False
     save_config(config)
-    return _finish_delete(post)
+    return _finish_delete(post or _post_delete)
 
 
-def retry_pending_delete(post=_post_delete):
+def retry_pending_delete(post=None):
     """Finish a deletion that couldn't be delivered earlier. True if resolved."""
     if load_config().get("pending_delete") is not True:
         return False
-    return _finish_delete(post) in ("deleted", "nothing")
+    paths.load_env()    # the collector's address comes from the private .env
+    return _finish_delete(post or _post_delete) in ("deleted", "nothing")
 
 
-def report_now(get_wasted=None, post=_post, post_delete=_post_delete):
+def retry_pending_delete_in_background():
+    """Retry a queued deletion without making the widget wait on the network.
+
+    Does nothing at all unless one is actually pending, so it is safe to call
+    on a timer.
+    """
+    if load_config().get("pending_delete") is True:
+        threading.Thread(target=retry_pending_delete, daemon=True).start()
+
+
+def report_now(get_wasted=None, post=None, post_delete=None):
     """Send the current total if reporting is on and the total changed.
 
     Returns True if a report was sent. Never raises: a missing network or a
@@ -211,7 +222,7 @@ def report_now(get_wasted=None, post=_post, post_delete=_post_delete):
         if config.get("pending_delete") is True:
             # A deletion that hasn't gone through comes first, and nothing is
             # reported until it has.
-            retry_pending_delete(post_delete)
+            retry_pending_delete(post_delete)   # None means the real network call
             config = load_config()
             if config.get("pending_delete") is True:
                 return False
@@ -230,7 +241,7 @@ def report_now(get_wasted=None, post=_post, post_delete=_post_delete):
         if config.get("last_sent") == [report["total_wasted"], report["wasted_count"]]:
             return False
 
-        if post(url, report):
+        if (post or _post)(url, report):
             config["last_sent"] = [report["total_wasted"], report["wasted_count"]]
             save_config(config)
             return True

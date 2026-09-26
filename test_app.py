@@ -1328,6 +1328,377 @@ def t_priv_idle_timer_runs_twice_a_minute():
     assert WIDGET.privacy_timer.isActive()
 
 
+# ------------------------------------------------------------ settings window
+def with_telemetry(fn, url="https://collector.example", post_delete=None):
+    """Run fn with telemetry pointed at a temp file and a fake collector, so
+    nothing touches the real config or the network."""
+    import telemetry
+    from unittest import mock
+    config = sandbox_path(f'tel_{os.urandom(4).hex()}.json')
+    env = {'MONEY_GUILT_COLLECTOR_URL': url} if url else {}
+    with mock.patch.object(telemetry, '_config_path', lambda: config), \
+         mock.patch.object(telemetry.paths, 'load_env', lambda: None), \
+         mock.patch.dict(os.environ, env), \
+         mock.patch.object(telemetry, '_post_delete', post_delete or (lambda u, i: True)):
+        if not url:
+            os.environ.pop('MONEY_GUILT_COLLECTOR_URL', None)
+        try:
+            fn()
+        finally:
+            WIDGET.sync_tray_actions()
+
+
+def make_dialog():
+    import settings_dialog
+    return settings_dialog.SettingsDialog(WIDGET)
+
+
+def wait_for_deletion(dialog, seconds=5):
+    from PyQt5.QtCore import QEventLoop, QTimer
+    loop = QEventLoop()
+    got = []
+    dialog.deletion_finished.connect(lambda outcome: (got.append(outcome), loop.quit()))
+    QTimer.singleShot(int(seconds * 1000), loop.quit)
+    return loop, got
+
+
+def pretend_shared():
+    """Make this install look like it has reported a total before."""
+    import telemetry
+    config = telemetry.load_config()
+    config["install_id"] = "123e4567-e89b-12d3-a456-426614174000"
+    config["last_sent"] = [12.5, 3]
+    telemetry.save_config(config)
+
+
+def restore_widget_defaults():
+    WIDGET.set_idle_minutes(5)
+    WIDGET.set_rotation_minutes(60)
+    WIDGET.set_ask_categorize(True)
+    WIDGET.set_manual_privacy(False)
+    WIDGET.set_auto_hide(True)
+    WIDGET.set_hide_from_capture(True)
+
+
+def t_set_widget_idle_minutes_applies_persists_and_clamps():
+    try:
+        WIDGET.set_idle_minutes(10)
+        eq(WIDGET.privacy.idle_limit, 600)
+        eq(WIDGET.settings.value("privacy/idle_minutes", type=int), 10)
+        WIDGET.set_idle_minutes(0)
+        eq(WIDGET.privacy.idle_limit, 60, "never below a minute")
+        WIDGET.set_idle_minutes(9999)
+        eq(WIDGET.privacy.idle_limit, 7200, "never above two hours")
+    finally:
+        restore_widget_defaults()
+
+
+def t_set_widget_rotation_drives_the_timer():
+    try:
+        eq(WIDGET.stat_timer.interval(), 3600000, "hourly by default")
+        WIDGET.set_rotation_minutes(15)
+        eq(WIDGET.stat_timer.interval(), 900000)
+        assert WIDGET.stat_timer.isActive()
+        WIDGET.advance_stat()
+        eq(WIDGET.stat_timer.interval(), 900000, "advancing must keep the chosen interval")
+        WIDGET.set_rotation_minutes(0)
+        assert not WIDGET.stat_timer.isActive(), "0 means only when asked"
+        WIDGET.advance_stat()
+        assert not WIDGET.stat_timer.isActive(), "advancing must not switch it back on"
+        eq(WIDGET.settings.value("display/rotation_minutes", type=int), 0)
+        WIDGET.set_rotation_minutes(60)
+        assert WIDGET.stat_timer.isActive()
+    finally:
+        restore_widget_defaults()
+
+
+def t_a_new_widget_reads_rotation_and_startup_settings():
+    from PyQt5.QtCore import QSettings
+    import widget
+    st = QSettings(sandbox_path('settings_boot.ini'), QSettings.IniFormat)
+    st.setValue("display/rotation_minutes", 30)
+    st.setValue("startup/ask_categorize", False)
+    other = widget.MoneyGuiltWidget(settings=st)
+    try:
+        eq(other.rotation_minutes, 30)
+        eq(other.stat_timer.interval(), 1800000)
+        eq(other.ask_categorize_at_start, False)
+    finally:
+        other.tray_icon.hide()
+
+
+def t_startup_prompt_follows_the_setting():
+    from unittest import mock
+    import telemetry
+    try:
+        for enabled in (True, False):
+            WIDGET.set_ask_categorize(enabled)
+            with mock.patch.object(WIDGET, 'prompt_for_new_transactions') as prompt, \
+                 mock.patch.object(WIDGET, 'show_sharing_notice'), \
+                 mock.patch.object(telemetry, 'report_in_background') as report:
+                WIDGET.startup()
+            eq(prompt.called, enabled)
+            assert report.called, "reporting still runs at startup either way"
+    finally:
+        restore_widget_defaults()
+
+
+def t_the_startup_prompt_is_on_by_default():
+    """Standing requirement: every launch asks, unless the user opts out."""
+    from PyQt5.QtCore import QSettings
+    import widget
+    other = widget.MoneyGuiltWidget(settings=QSettings(
+        sandbox_path('settings_default_ask.ini'), QSettings.IniFormat))
+    try:
+        eq(other.ask_categorize_at_start, True)
+    finally:
+        other.tray_icon.hide()
+
+
+def t_tray_menu_opens_settings_without_being_moved_by_macos():
+    from PyQt5.QtWidgets import QAction
+    actions = {a.text(): a for a in WIDGET.tray_icon.contextMenu().actions()}
+    assert 'Settings\u2026' in actions, list(actions)
+    eq(actions['Settings\u2026'].menuRole(), QAction.NoRole)
+
+
+def t_open_settings_shows_the_window_then_resyncs_the_menu():
+    from unittest import mock
+    import settings_dialog
+    with mock.patch.object(settings_dialog.SettingsDialog, 'exec_') as shown, \
+         mock.patch.object(WIDGET, 'sync_tray_actions') as sync:
+        WIDGET.open_settings()
+    eq(shown.call_count, 1)
+    eq(sync.call_count, 1)
+
+
+def t_sync_tray_actions_matches_state_without_firing_handlers():
+    from unittest import mock
+    try:
+        WIDGET.privacy.manual = True
+        with mock.patch.object(WIDGET, 'set_manual_privacy') as handler:
+            WIDGET.sync_tray_actions()
+        eq(WIDGET.hide_amounts_action.isChecked(), True)
+        handler.assert_not_called()
+    finally:
+        WIDGET.privacy.manual = False
+        WIDGET.sync_tray_actions()
+
+
+def t_settings_window_is_native_looking_and_on_top():
+    """A child of the widget would inherit its dark translucent stylesheet."""
+    from PyQt5.QtCore import Qt as QtC
+    d = make_dialog()
+    assert d.parent() is None
+    assert d.windowFlags() & QtC.WindowStaysOnTopHint
+    eq(d.styleSheet(), "")
+
+
+def t_settings_window_shows_the_current_state():
+    try:
+        WIDGET.set_manual_privacy(True)
+        WIDGET.set_auto_hide(False)
+        WIDGET.set_idle_minutes(12)
+        WIDGET.set_hide_from_capture(False)
+        WIDGET.set_ask_categorize(False)
+        WIDGET.set_rotation_minutes(240)
+        d = make_dialog()
+        eq(d.hide_checkbox.isChecked(), True)
+        eq(d.auto_checkbox.isChecked(), False)
+        eq(d.idle_spin.value(), 12)
+        eq(d.idle_spin.isEnabled(), False, "minutes only matter while auto-hide is on")
+        eq(d.capture_checkbox.isChecked(), False)
+        eq(d.ask_checkbox.isChecked(), False)
+        eq(d.rotation_combo.currentData(), 240)
+    finally:
+        restore_widget_defaults()
+
+
+def t_opening_the_window_changes_nothing():
+    from unittest import mock
+    with mock.patch.object(WIDGET, 'set_manual_privacy') as a, \
+         mock.patch.object(WIDGET, 'set_auto_hide') as b, \
+         mock.patch.object(WIDGET, 'set_idle_minutes') as c, \
+         mock.patch.object(WIDGET, 'set_hide_from_capture') as e, \
+         mock.patch.object(WIDGET, 'set_ask_categorize') as f, \
+         mock.patch.object(WIDGET, 'set_rotation_minutes') as g:
+        make_dialog()
+    for handler in (a, b, c, e, f, g):
+        handler.assert_not_called()
+
+
+def t_settings_controls_apply_immediately_and_update_the_menu():
+    try:
+        d = make_dialog()
+        d.hide_checkbox.setChecked(True)
+        eq(WIDGET.privacy.manual, True)
+        eq(WIDGET.hide_amounts_action.isChecked(), True, "the menu must follow")
+
+        d.auto_checkbox.setChecked(False)
+        eq(WIDGET.privacy.auto_hide, False)
+        eq(d.idle_spin.isEnabled(), False)
+        eq(WIDGET.auto_hide_action.isChecked(), False)
+        d.auto_checkbox.setChecked(True)
+        eq(d.idle_spin.isEnabled(), True)
+
+        d.idle_spin.setValue(20)
+        eq(WIDGET.privacy.idle_limit, 1200)
+
+        d.capture_checkbox.setChecked(False)
+        eq(WIDGET.hide_from_capture, False)
+        eq(WIDGET.capture_action.isChecked(), False)
+
+        d.ask_checkbox.setChecked(False)
+        eq(WIDGET.ask_categorize_at_start, False)
+
+        d.rotation_combo.setCurrentIndex(d.rotation_combo.findData(30))
+        eq(WIDGET.rotation_minutes, 30)
+        eq(WIDGET.stat_timer.interval(), 1800000)
+    finally:
+        restore_widget_defaults()
+
+
+def t_a_setting_stored_outside_the_choices_is_shown_not_hidden():
+    try:
+        WIDGET.rotation_minutes = 7
+        d = make_dialog()
+        eq(d.rotation_combo.currentData(), 7)
+        eq(WIDGET.rotation_minutes, 7, "opening the window must not change it")
+    finally:
+        restore_widget_defaults()
+
+
+def t_share_checkbox_controls_reporting_and_the_menu():
+    import telemetry
+    def body():
+        d = make_dialog()
+        eq(d.share_checkbox.isChecked(), True, "on by default")
+        d.share_checkbox.setChecked(False)
+        eq(telemetry.is_enabled(), False)
+        eq(WIDGET.share_total_action.isChecked(), False)
+        assert 'off' in d.share_status.text(), d.share_status.text()
+        d.share_checkbox.setChecked(True)
+        eq(telemetry.is_enabled(), True)
+        assert 'on' in d.share_status.text()
+    with_telemetry(body)
+
+
+def t_status_text_covers_every_state():
+    d = make_dialog()
+    base = {"enabled": True, "collector_configured": True,
+            "has_shared": False, "delete_pending": False}
+    assert 'Sharing is on' in d.status_text(base)
+    assert 'Sharing is off' in d.status_text(dict(base, enabled=False))
+    assert 'No reporting server' in d.status_text(dict(base, collector_configured=False))
+    pending = d.status_text(dict(base, delete_pending=True, enabled=False))
+    assert 'pending' in pending and 'retried automatically' in pending
+
+
+def t_one_click_deletes_what_was_reported_and_turns_sharing_off():
+    import telemetry
+    asked = []
+    def body():
+        pretend_shared()
+        d = make_dialog()
+        loop, got = wait_for_deletion(d)
+        d.delete_button.click()               # the only step
+        loop.exec_()
+        eq(got, ['deleted'])
+        eq(asked, [("https://collector.example", "123e4567-e89b-12d3-a456-426614174000")])
+        eq(telemetry.is_enabled(), False, "deleting must stop sharing")
+        eq(d.share_checkbox.isChecked(), False)
+        eq(WIDGET.share_total_action.isChecked(), False)
+        assert 'Deleted' in d.delete_result.text(), d.delete_result.text()
+        assert d.delete_button.isEnabled(), "usable again afterwards"
+        assert 'install_id' not in telemetry.load_config()
+    with_telemetry(body, post_delete=lambda url, i: asked.append((url, i)) or True)
+
+
+def t_deletion_says_so_when_nothing_had_been_shared():
+    def body():
+        d = make_dialog()
+        loop, got = wait_for_deletion(d)
+        d.delete_button.click()
+        loop.exec_()
+        eq(got, ['nothing'])
+        assert 'Nothing had been shared' in d.delete_result.text()
+    with_telemetry(body)
+
+
+def t_an_unreachable_server_is_reported_and_queued_not_lost():
+    import telemetry
+    def body():
+        pretend_shared()
+        d = make_dialog()
+        loop, got = wait_for_deletion(d)
+        d.delete_button.click()
+        loop.exec_()
+        eq(got, ['pending'])
+        assert 'retried automatically' in d.delete_result.text()
+        assert telemetry.status()['delete_pending']
+        assert 'pending' in d.share_status.text()
+        eq(telemetry.is_enabled(), False, "still stops sharing")
+    with_telemetry(body, post_delete=lambda url, i: False)
+
+
+def t_the_button_is_blocked_while_a_deletion_is_running():
+    import threading
+    release = threading.Event()
+    calls = []
+    def slow(url, install_id):
+        calls.append(install_id)
+        release.wait(5)
+        return True
+    def body():
+        pretend_shared()
+        d = make_dialog()
+        loop, got = wait_for_deletion(d, seconds=8)
+        d.delete_button.click()
+        QT_APP.processEvents()
+        eq(d.delete_button.isEnabled(), False, "no second click while it runs")
+        assert 'Deleting' in d.delete_result.text()
+        d.delete_reported()                    # a second attempt is ignored
+        release.set()
+        loop.exec_()
+        eq(got, ['deleted'])
+        eq(len(calls), 1, "exactly one request went out")
+    with_telemetry(body, post_delete=slow)
+
+
+def t_closing_waits_for_a_running_deletion():
+    import threading
+    release = threading.Event()
+    def slow(url, install_id):
+        release.wait(5)
+        return True
+    def body():
+        pretend_shared()
+        d = make_dialog()
+        d.delete_button.click()
+        threading.Timer(0.3, release.set).start()
+        d.done(0)                              # must not destroy a running thread
+        assert not d._worker.isRunning()
+    with_telemetry(body, post_delete=slow)
+
+
+def t_a_pending_deletion_is_retried_every_fifteen_minutes():
+    import telemetry
+    eq(WIDGET.delete_retry_timer.interval(), 900000)
+    assert WIDGET.delete_retry_timer.isActive()
+
+
+def t_show_data_folder_opens_the_real_folder():
+    from unittest import mock
+    from PyQt5.QtCore import QUrl
+    import paths
+    from PyQt5.QtGui import QDesktopServices
+    d = make_dialog()
+    with mock.patch.object(QDesktopServices, 'openUrl') as opener:
+        d.show_data_folder()
+    opener.assert_called_once_with(QUrl.fromLocalFile(paths.data_dir()))
+    eq(d.folder_label.text(), paths.data_dir())
+
+
 WIDGET_TESTS = [
     ("widget: every stat renders", t_widget_renders_every_stat),
     ("widget: value stays centred at all sizes", t_widget_value_centred),
@@ -1380,6 +1751,28 @@ WIDGET_TESTS = [
     ("feedback: the form validates, then sends", t_feedback_form_validates_then_sends),
     ("feedback: a failed send shows why and can be retried", t_feedback_form_shows_errors_and_allows_retry),
     ("privacy: the idle check runs twice a minute", t_priv_idle_timer_runs_twice_a_minute),
+    ("settings: idle minutes apply, persist and clamp", t_set_widget_idle_minutes_applies_persists_and_clamps),
+    ("settings: the rotation interval drives the timer", t_set_widget_rotation_drives_the_timer),
+    ("settings: a new widget reads rotation and startup settings", t_a_new_widget_reads_rotation_and_startup_settings),
+    ("settings: the startup prompt follows its setting", t_startup_prompt_follows_the_setting),
+    ("settings: the startup prompt is on by default", t_the_startup_prompt_is_on_by_default),
+    ("settings: the tray has a Settings item macOS won't move", t_tray_menu_opens_settings_without_being_moved_by_macos),
+    ("settings: open_settings shows the window then resyncs the menu", t_open_settings_shows_the_window_then_resyncs_the_menu),
+    ("settings: syncing the menu fires no handlers", t_sync_tray_actions_matches_state_without_firing_handlers),
+    ("settings: the window is unparented, unstyled and on top", t_settings_window_is_native_looking_and_on_top),
+    ("settings: the window shows the current state", t_settings_window_shows_the_current_state),
+    ("settings: opening the window changes nothing", t_opening_the_window_changes_nothing),
+    ("settings: controls apply immediately and update the menu", t_settings_controls_apply_immediately_and_update_the_menu),
+    ("settings: an odd stored value is shown, not hidden", t_a_setting_stored_outside_the_choices_is_shown_not_hidden),
+    ("settings: the share checkbox controls reporting and the menu", t_share_checkbox_controls_reporting_and_the_menu),
+    ("settings: status text covers every state", t_status_text_covers_every_state),
+    ("settings: one click deletes the reported data and stops sharing", t_one_click_deletes_what_was_reported_and_turns_sharing_off),
+    ("settings: deleting says so when nothing was shared", t_deletion_says_so_when_nothing_had_been_shared),
+    ("settings: an unreachable server is reported and queued", t_an_unreachable_server_is_reported_and_queued_not_lost),
+    ("settings: the delete button is blocked while it runs", t_the_button_is_blocked_while_a_deletion_is_running),
+    ("settings: closing waits for a running deletion", t_closing_waits_for_a_running_deletion),
+    ("settings: a pending deletion is retried every fifteen minutes", t_a_pending_deletion_is_retried_every_fifteen_minutes),
+    ("settings: Show in Finder opens the real data folder", t_show_data_folder_opens_the_real_folder),
     ("review: taught merchants are applied, not asked", t_rev_taught_merchants_are_applied_not_asked),
     ("review: prompted column migrates from a reviewed-only database", t_rev_prompted_column_migrates_from_reviewed_only_schema),
 ]

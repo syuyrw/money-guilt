@@ -177,6 +177,18 @@ class Deletion(unittest.TestCase):
         self.assertFalse(telemetry.status()["delete_pending"])
         self.assertNotIn("install_id", telemetry.load_config())
 
+    def test_background_retry_starts_a_thread_only_when_a_deletion_is_pending(self):
+        from unittest import mock
+        with mock.patch.object(telemetry.threading, "Thread") as thread:
+            telemetry.retry_pending_delete_in_background()
+            thread.assert_not_called()          # nothing pending: a free no-op
+            self.share()
+            telemetry.delete_reported_data(lambda u, i: False)
+            telemetry.retry_pending_delete_in_background()
+            self.assertEqual(thread.call_count, 1)
+            self.assertIs(thread.call_args.kwargs["target"], telemetry.retry_pending_delete)
+            self.assertTrue(thread.call_args.kwargs["daemon"], "must not hold the app open")
+
     def test_nothing_to_retry_does_nothing(self):
         self.assertFalse(telemetry.retry_pending_delete(self.post_delete))
         self.assertEqual(self.deleted, [])

@@ -6,7 +6,7 @@ import logging
 # Set Qt plugin path for macOS
 os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = '/usr/local/lib/python3.14/site-packages/PyQt5/Qt5/plugins'
 
-from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSystemTrayIcon, QMenu, QMessageBox
+from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSystemTrayIcon, QMenu, QMessageBox, QAction
 from PyQt5.QtCore import QUrl, Qt, QTimer, QSize, QPoint, QSettings, pyqtSignal, QRect, QRectF, QLockFile, QDir
 from PyQt5.QtGui import QDesktopServices, QFont, QFontMetrics, QCursor, QPainter, QPen, QColor, QBrush, QPixmap, QIcon, QPainterPath, QRegion, QLinearGradient
 from stats import get_random_stat, get_all_stats
@@ -55,6 +55,11 @@ class MoneyGuiltWidget(QWidget):
             manual=self.settings.value("privacy/manual", False, type=bool),
             auto_hide=self.settings.value("privacy/auto_hide", True, type=bool),
             idle_limit=self.settings.value("privacy/idle_minutes", 5, type=int) * 60)
+        self.rotation_minutes = self.settings.value("display/rotation_minutes", 60, type=int)
+        # On by default, as the user asked: every launch offers to categorize
+        # new transactions. Settings can switch it off.
+        self.ask_categorize_at_start = self.settings.value(
+            "startup/ask_categorize", True, type=bool)
         # On by default: the widget stays out of screenshots and screen shares
         # unless you turn that off from the tray menu.
         self.hide_from_capture = self.settings.value(
@@ -311,6 +316,12 @@ class MoneyGuiltWidget(QWidget):
         next_action = tray_menu.addAction("Next Stat")
         next_action.triggered.connect(lambda: self.advance_stat())
 
+        # NoRole: macOS moves items called "Settings"/"Preferences" into the
+        # application menu, which this menu bar icon doesn't have.
+        settings_action = tray_menu.addAction("Settings\u2026")
+        settings_action.setMenuRole(QAction.NoRole)
+        settings_action.triggered.connect(lambda: self.open_settings())
+
         tray_menu.addSeparator()
 
         # Privacy: the widget sits on screen showing spending
@@ -437,7 +448,8 @@ class MoneyGuiltWidget(QWidget):
 
     def startup(self):
         self.show_sharing_notice()
-        self.prompt_for_new_transactions()
+        if self.ask_categorize_at_start:
+            self.prompt_for_new_transactions()
         telemetry.report_in_background()
 
     def prompt_for_new_transactions(self):
@@ -479,6 +491,50 @@ class MoneyGuiltWidget(QWidget):
                for screen in QApplication.screens()):
             return pos
         return self.default_position()
+
+    def _restart_rotation_timer(self):
+        self.stat_timer.stop()
+        if self.rotation_minutes > 0:
+            self.stat_timer.start(self.rotation_minutes * 60000)
+
+    def _save(self, key, value):
+        self.settings.setValue(key, value)
+        self.settings.sync()
+
+    def set_idle_minutes(self, minutes):
+        """How long the machine must be idle before amounts are hidden."""
+        minutes = max(1, min(120, int(minutes)))
+        self.privacy.idle_limit = minutes * 60
+        self._save("privacy/idle_minutes", minutes)
+
+    def set_rotation_minutes(self, minutes):
+        """Minutes between automatic stat changes; 0 means only when asked."""
+        self.rotation_minutes = max(0, int(minutes))
+        self._save("display/rotation_minutes", self.rotation_minutes)
+        self._restart_rotation_timer()
+
+    def set_ask_categorize(self, enabled):
+        self.ask_categorize_at_start = bool(enabled)
+        self._save("startup/ask_categorize", bool(enabled))
+
+    def sync_tray_actions(self):
+        """Make the menu bar checkboxes match the real settings.
+
+        Signals are blocked so setting a box doesn't fire its own handler.
+        """
+        for action, value in (
+                (self.hide_amounts_action, self.privacy.manual),
+                (self.auto_hide_action, self.privacy.auto_hide),
+                (self.capture_action, self.hide_from_capture),
+                (self.share_total_action, telemetry.is_enabled())):
+            action.blockSignals(True)
+            action.setChecked(bool(value))
+            action.blockSignals(False)
+
+    def open_settings(self):
+        from settings_dialog import SettingsDialog
+        SettingsDialog(self).exec_()
+        self.sync_tray_actions()
 
     def refresh_display(self):
         """Redraw the current stat, e.g. after privacy changes."""
@@ -577,10 +633,10 @@ class MoneyGuiltWidget(QWidget):
 
     def setup_timers(self):
         """Setup timers for updating stats"""
-        # Update stat every hour
+        # Rotate the stat on the interval chosen in Settings (hourly by default)
         self.stat_timer = QTimer()
         self.stat_timer.timeout.connect(self.show_next_stat)
-        self.stat_timer.start(3600000)  # 1 hour in milliseconds
+        self._restart_rotation_timer()
 
         # Update footer timestamp every minute
         self.update_timer = QTimer()
@@ -592,15 +648,23 @@ class MoneyGuiltWidget(QWidget):
         self.privacy_timer.timeout.connect(self._check_idle)
         self.privacy_timer.start(15000)
 
-        logger.info("Timers started: stat rotation every hour")
+        # A deletion that couldn't reach the server is retried every 15 minutes
+        # for as long as the widget runs, not only at the next launch; it does
+        # nothing when no deletion is waiting.
+        self.delete_retry_timer = QTimer()
+        self.delete_retry_timer.timeout.connect(telemetry.retry_pending_delete_in_background)
+        self.delete_retry_timer.start(900000)
+
+        logger.info(f"Timers started: stat rotation every {self.rotation_minutes} minutes"
+                    if self.rotation_minutes else "Timers started: stat rotation off")
 
     def advance_stat(self):
         """Refresh the stats from the database, then move on to the next one"""
         self.load_stats()
         self.show_next_stat()
-        # Restart the hourly timer so a stat you just picked isn't replaced
+        # Restart the rotation timer so a stat you just picked isn't replaced
         # a moment later
-        self.stat_timer.start(3600000)
+        self._restart_rotation_timer()
 
     def show_next_stat(self):
         """Display the next stat in rotation"""
