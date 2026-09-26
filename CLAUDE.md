@@ -23,7 +23,7 @@ A PyQt5 macOS menu-bar widget that shows rotating "guilt" stats about wasteful s
 - A running widget keeps its old code. After changing code, tell the user to restart it, or restart it only if they say so. When restarting, kill only the widget's own processes; never `pkill` by a broad pattern like `Python.app`.
 - The widget allows only one instance (lock file in the temp folder).
 - Run the tests before committing: `python3 test_app.py` (needs Qt, so the Homebrew Python) and `.venv/bin/python -m unittest test_security test_paths test_secure_store test_telemetry` (needs keyring/Flask, so the `.venv`).
-- Wasted-dollar reporting (`telemetry.py`, `collector/server.py`) is on by default with an opt-out (tray menu "Share Anonymous Wasted Total", plus a first-launch notice explaining it) and sends only an anonymous install ID, the running total and a count. Never add merchants, dates or per-transaction amounts to the report. Users can delete what they reported (Settings, or `python3 telemetry.py delete`): that erases the collector's row, turns sharing off, forgets the install ID, and retries every 15 minutes if the server can't be reached. Keep PRIVACY.md true to this. `python3 wasted_total.py` prints your local total; it is never shown in the widget.
+- Wasted-dollar reporting (`telemetry.py`, `collector/server.py`) is on by default with an opt-out (Settings, plus a first-launch notice explaining it and offering Turn Off Sharing) and sends only an anonymous install ID, the running total and a count. Never add merchants, dates or per-transaction amounts to the report. Users can delete what they reported (Settings, or `python3 telemetry.py delete`): that erases the collector's row, turns sharing off, forgets the install ID, and retries every 15 minutes if the server can't be reached. Keep PRIVACY.md true to this. `python3 wasted_total.py` prints your local total; it is never shown in the widget.
 
 ## Behaviour decisions
 
@@ -44,7 +44,7 @@ Other decisions:
 
 ## Settings window
 
-- Menu bar icon > Settings… (`settings_dialog.py`). Controls apply immediately, with no OK/Cancel, and the window holds no state of its own: it reads and writes through the widget's setters, then calls `sync_tray_actions()` so the menu bar checkboxes never disagree with it.
+- Menu bar icon > Settings… (`settings_dialog.py`). Controls apply immediately, with no OK/Cancel, and the window holds no state of its own: it reads and writes through the widget's setters and the telemetry config. **Settings-page options live only there**: the menu bar icon holds actions (Hide Widget, Next Stat, Settings…, Categorize, Send Feedback, Quit), never a second copy of a setting. A duplicate would need its own syncing and can drift out of step; a test enforces this.
 - Any new user setting goes here **and** is persisted in `QSettings` through a widget setter (`set_*`), with a default in `__init__`. Don't store settings in the dialog.
 - It is created with no Qt parent on purpose: a child of the widget inherits the dark translucent stylesheet and mangles native controls. Word-wrapped notes get an exact height from font metrics (`_note`); letting Qt size them clipped text or left big gaps.
 - "Delete My Reported Data" acts on the first click, in a background thread, and also turns sharing off (otherwise the next launch would re-upload the total). The startup categorize prompt is on by default and can be switched off here.

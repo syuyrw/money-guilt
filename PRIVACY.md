@@ -41,8 +41,7 @@ Reports are only sent when the developer has set up a collection server. If none
 
 Sharing is on by default. You can turn it off at any time:
 
-- click the Money Guilt icon in the menu bar and untick **Share Anonymous Wasted Total**, or
-- open **Settings…** from that same menu and untick **Share my anonymous wasted total**, or
+- open **Settings…** from the Money Guilt icon in the menu bar and untick **Share my anonymous wasted total**, or
 - click **Turn Off Sharing** in the notice shown the first time you open the app, or
 - run `python3 telemetry.py disable` in the project folder.
 

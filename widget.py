@@ -326,29 +326,6 @@ class MoneyGuiltWidget(QWidget):
 
         tray_menu.addSeparator()
 
-        # Privacy: the widget sits on screen showing spending
-        self.hide_amounts_action = tray_menu.addAction("Hide Amounts")
-        self.hide_amounts_action.setCheckable(True)
-        self.hide_amounts_action.setChecked(self.privacy.manual)
-        self.hide_amounts_action.toggled.connect(self.set_manual_privacy)
-
-        self.auto_hide_action = tray_menu.addAction("Auto-Hide When Idle")
-        self.auto_hide_action.setCheckable(True)
-        self.auto_hide_action.setChecked(self.privacy.auto_hide)
-        self.auto_hide_action.toggled.connect(self.set_auto_hide)
-
-        self.capture_action = tray_menu.addAction("Hide From Screenshots && Sharing")
-        self.capture_action.setCheckable(True)
-        self.capture_action.setChecked(self.hide_from_capture)
-        self.capture_action.toggled.connect(self.set_hide_from_capture)
-
-        self.share_total_action = tray_menu.addAction("Share Anonymous Wasted Total")
-        self.share_total_action.setCheckable(True)
-        self.share_total_action.setChecked(telemetry.is_enabled())
-        self.share_total_action.toggled.connect(telemetry.set_enabled)
-
-        tray_menu.addSeparator()
-
         # Categorize transactions
         categorize_action = tray_menu.addAction("Categorize Transactions")
         categorize_action.triggered.connect(lambda: self.open_categorization_dialog())
@@ -439,13 +416,12 @@ class MoneyGuiltWidget(QWidget):
             "It reports your total wasted dollars, a transaction count, and a "
             "random ID that isn't linked to you. No merchants, dates, or "
             "individual purchases are ever sent.\n\n"
-            "You can change this any time from the menu bar icon: "
-            "Share Anonymous Wasted Total.")
+            "You can change this any time in Settings, from the menu bar icon.")
         box.addButton("OK", QMessageBox.AcceptRole)
         turn_off = box.addButton("Turn Off Sharing", QMessageBox.DestructiveRole)
         box.exec_()
         if box.clickedButton() is turn_off:
-            self.share_total_action.setChecked(False)
+            telemetry.set_enabled(False)
         telemetry.mark_notice_shown()
 
     def startup(self):
@@ -519,24 +495,9 @@ class MoneyGuiltWidget(QWidget):
         self.ask_categorize_at_start = bool(enabled)
         self._save("startup/ask_categorize", bool(enabled))
 
-    def sync_tray_actions(self):
-        """Make the menu bar checkboxes match the real settings.
-
-        Signals are blocked so setting a box doesn't fire its own handler.
-        """
-        for action, value in (
-                (self.hide_amounts_action, self.privacy.manual),
-                (self.auto_hide_action, self.privacy.auto_hide),
-                (self.capture_action, self.hide_from_capture),
-                (self.share_total_action, telemetry.is_enabled())):
-            action.blockSignals(True)
-            action.setChecked(bool(value))
-            action.blockSignals(False)
-
     def open_settings(self):
         from settings_dialog import SettingsDialog
         SettingsDialog(self).exec_()
-        self.sync_tray_actions()
 
     def refresh_display(self):
         """Redraw the current stat, e.g. after privacy changes."""

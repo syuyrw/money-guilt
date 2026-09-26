@@ -2,8 +2,8 @@
 
 Every control applies as soon as it changes, the way macOS settings do, so
 there is no OK or Cancel. The window holds no state of its own: it reads from
-and writes to the widget, so the menu bar checkboxes and this window can't
-disagree.
+and writes to the widget and the telemetry settings. This is the only place
+these settings live; the menu bar icon just opens it.
 """
 from PyQt5.QtCore import Qt, QThread, QUrl, pyqtSignal
 from PyQt5.QtGui import QColor, QDesktopServices, QFontMetrics, QPalette
@@ -248,11 +248,10 @@ class SettingsDialog(QDialog):
 
     # ------------------------------------------------------------ actions
     def _apply(self, action):
-        """Run a change to the widget, then keep the menu bar checkboxes in step."""
+        """Run a change to the widget, unless the window is only filling itself in."""
         if self._loading:
             return
         action()
-        self.app_widget.sync_tray_actions()
 
     def _on_share_toggled(self, checked):
         def go():
@@ -296,11 +295,10 @@ class SettingsDialog(QDialog):
 
     def _deletion_done(self, outcome):
         self.delete_result.setText(DELETE_RESULTS.get(outcome, DELETE_RESULTS["pending"]))
-        # Deleting turns sharing off; show that in the checkbox and menu.
+        # Deleting turns sharing off; show that in the checkbox.
         was_loading, self._loading = self._loading, True
         self.share_checkbox.setChecked(telemetry.is_enabled())
         self._loading = was_loading
-        self.app_widget.sync_tray_actions()
         self.refresh_status()
         self.delete_button.setEnabled(True)
         self.deletion_finished.emit(outcome)

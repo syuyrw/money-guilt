@@ -1251,12 +1251,22 @@ def t_priv_capture_call_is_made_on_cocoa():
         WIDGET.set_hide_from_capture(original)
 
 
-def t_priv_tray_menu_has_the_privacy_actions():
-    for action in (WIDGET.hide_amounts_action, WIDGET.auto_hide_action,
-                   WIDGET.capture_action):
-        assert action.isCheckable()
-    assert 'Screenshots' in WIDGET.capture_action.text()
-    eq(WIDGET.auto_hide_action.isChecked(), WIDGET.privacy.auto_hide)
+def tray_texts():
+    return [a.text() for a in WIDGET.tray_icon.contextMenu().actions() if a.text()]
+
+
+def t_tray_menu_does_not_duplicate_the_settings_page():
+    """Anything on the Settings page lives only there."""
+    texts = tray_texts()
+    for gone in ("Hide Amounts", "Auto-Hide When Idle",
+                 "Hide From Screenshots && Sharing", "Share Anonymous Wasted Total"):
+        assert gone not in texts, f"{gone!r} is on the Settings page, not the menu"
+    for kept in ("Hide Widget", "Next Stat", "Settings\u2026",
+                 "Categorize Transactions", "Quit Money Guilt"):
+        assert kept in texts, f"{kept!r} should still be in the menu: {texts}"
+    for stale in ("hide_amounts_action", "auto_hide_action", "capture_action",
+                  "share_total_action", "sync_tray_actions"):
+        assert not hasattr(WIDGET, stale), f"leftover {stale}"
 
 
 from PyQt5.QtGui import QDesktopServices as WIDGET_MODULE_DESKTOP_SERVICES
@@ -1341,10 +1351,7 @@ def with_telemetry(fn, url="https://collector.example", post_delete=None):
          mock.patch.object(telemetry, '_post_delete', post_delete or (lambda u, i: True)):
         if not url:
             os.environ.pop('MONEY_GUILT_COLLECTOR_URL', None)
-        try:
-            fn()
-        finally:
-            WIDGET.sync_tray_actions()
+        fn()
 
 
 def make_dialog():
@@ -1461,27 +1468,12 @@ def t_tray_menu_opens_settings_without_being_moved_by_macos():
     eq(actions['Settings\u2026'].menuRole(), QAction.NoRole)
 
 
-def t_open_settings_shows_the_window_then_resyncs_the_menu():
+def t_open_settings_shows_the_window():
     from unittest import mock
     import settings_dialog
-    with mock.patch.object(settings_dialog.SettingsDialog, 'exec_') as shown, \
-         mock.patch.object(WIDGET, 'sync_tray_actions') as sync:
+    with mock.patch.object(settings_dialog.SettingsDialog, 'exec_') as shown:
         WIDGET.open_settings()
     eq(shown.call_count, 1)
-    eq(sync.call_count, 1)
-
-
-def t_sync_tray_actions_matches_state_without_firing_handlers():
-    from unittest import mock
-    try:
-        WIDGET.privacy.manual = True
-        with mock.patch.object(WIDGET, 'set_manual_privacy') as handler:
-            WIDGET.sync_tray_actions()
-        eq(WIDGET.hide_amounts_action.isChecked(), True)
-        handler.assert_not_called()
-    finally:
-        WIDGET.privacy.manual = False
-        WIDGET.sync_tray_actions()
 
 
 def t_settings_window_is_native_looking_and_on_top():
@@ -1526,17 +1518,15 @@ def t_opening_the_window_changes_nothing():
         handler.assert_not_called()
 
 
-def t_settings_controls_apply_immediately_and_update_the_menu():
+def t_settings_controls_apply_immediately():
     try:
         d = make_dialog()
         d.hide_checkbox.setChecked(True)
         eq(WIDGET.privacy.manual, True)
-        eq(WIDGET.hide_amounts_action.isChecked(), True, "the menu must follow")
 
         d.auto_checkbox.setChecked(False)
         eq(WIDGET.privacy.auto_hide, False)
         eq(d.idle_spin.isEnabled(), False)
-        eq(WIDGET.auto_hide_action.isChecked(), False)
         d.auto_checkbox.setChecked(True)
         eq(d.idle_spin.isEnabled(), True)
 
@@ -1545,7 +1535,6 @@ def t_settings_controls_apply_immediately_and_update_the_menu():
 
         d.capture_checkbox.setChecked(False)
         eq(WIDGET.hide_from_capture, False)
-        eq(WIDGET.capture_action.isChecked(), False)
 
         d.ask_checkbox.setChecked(False)
         eq(WIDGET.ask_categorize_at_start, False)
@@ -1567,14 +1556,13 @@ def t_a_setting_stored_outside_the_choices_is_shown_not_hidden():
         restore_widget_defaults()
 
 
-def t_share_checkbox_controls_reporting_and_the_menu():
+def t_share_checkbox_controls_reporting():
     import telemetry
     def body():
         d = make_dialog()
         eq(d.share_checkbox.isChecked(), True, "on by default")
         d.share_checkbox.setChecked(False)
         eq(telemetry.is_enabled(), False)
-        eq(WIDGET.share_total_action.isChecked(), False)
         assert 'off' in d.share_status.text(), d.share_status.text()
         d.share_checkbox.setChecked(True)
         eq(telemetry.is_enabled(), True)
@@ -1606,7 +1594,6 @@ def t_one_click_deletes_what_was_reported_and_turns_sharing_off():
         eq(asked, [("https://collector.example", "123e4567-e89b-12d3-a456-426614174000")])
         eq(telemetry.is_enabled(), False, "deleting must stop sharing")
         eq(d.share_checkbox.isChecked(), False)
-        eq(WIDGET.share_total_action.isChecked(), False)
         assert 'Deleted' in d.delete_result.text(), d.delete_result.text()
         assert d.delete_button.isEnabled(), "usable again afterwards"
         assert 'install_id' not in telemetry.load_config()
@@ -1698,6 +1685,51 @@ def t_show_data_folder_opens_the_real_folder():
     eq(d.folder_label.text(), paths.data_dir())
 
 
+# ----------------------------------------------------- first-launch notice
+def run_notice(click_text):
+    """Show the notice and press the named button, without a modal loop."""
+    from unittest import mock
+    from PyQt5.QtWidgets import QMessageBox
+    import telemetry
+    shown = {}
+    def fake_exec(box):
+        shown["text"] = box.informativeText()
+        shown["buttons"] = [b.text() for b in box.buttons()]
+        if click_text:
+            [b for b in box.buttons() if b.text() == click_text][0].click()
+    with mock.patch.object(QMessageBox, 'exec_', new=fake_exec):
+        WIDGET.show_sharing_notice()
+    return shown
+
+
+def t_notice_tells_people_to_use_settings_not_a_menu_item_that_is_gone():
+    def body():
+        shown = run_notice("OK")
+        assert "Settings" in shown["text"], shown["text"]
+        assert "Share Anonymous Wasted Total" not in shown["text"]
+        eq(shown["buttons"], ["OK", "Turn Off Sharing"])
+    with_telemetry(body)
+
+
+def t_notice_turn_off_sharing_really_turns_it_off():
+    import telemetry
+    def body():
+        run_notice("Turn Off Sharing")
+        eq(telemetry.is_enabled(), False)
+        eq(telemetry.needs_notice(), False, "and it isn't shown again")
+    with_telemetry(body)
+
+
+def t_notice_ok_leaves_sharing_on_and_is_shown_once():
+    import telemetry
+    def body():
+        run_notice("OK")
+        eq(telemetry.is_enabled(), True)
+        eq(telemetry.needs_notice(), False)
+        eq(run_notice(None), {}, "the second launch shows nothing")
+    with_telemetry(body)
+
+
 WIDGET_TESTS = [
     ("widget: every stat renders", t_widget_renders_every_stat),
     ("widget: value stays centred at all sizes", t_widget_value_centred),
@@ -1756,14 +1788,13 @@ WIDGET_TESTS = [
     ("settings: the startup prompt follows its setting", t_startup_prompt_follows_the_setting),
     ("settings: the startup prompt is on by default", t_the_startup_prompt_is_on_by_default),
     ("settings: the tray has a Settings item macOS won't move", t_tray_menu_opens_settings_without_being_moved_by_macos),
-    ("settings: open_settings shows the window then resyncs the menu", t_open_settings_shows_the_window_then_resyncs_the_menu),
-    ("settings: syncing the menu fires no handlers", t_sync_tray_actions_matches_state_without_firing_handlers),
+    ("settings: open_settings shows the window", t_open_settings_shows_the_window),
     ("settings: the window is unparented, unstyled and on top", t_settings_window_is_native_looking_and_on_top),
     ("settings: the window shows the current state", t_settings_window_shows_the_current_state),
     ("settings: opening the window changes nothing", t_opening_the_window_changes_nothing),
-    ("settings: controls apply immediately and update the menu", t_settings_controls_apply_immediately_and_update_the_menu),
+    ("settings: controls apply immediately", t_settings_controls_apply_immediately),
     ("settings: an odd stored value is shown, not hidden", t_a_setting_stored_outside_the_choices_is_shown_not_hidden),
-    ("settings: the share checkbox controls reporting and the menu", t_share_checkbox_controls_reporting_and_the_menu),
+    ("settings: the share checkbox controls reporting", t_share_checkbox_controls_reporting),
     ("settings: status text covers every state", t_status_text_covers_every_state),
     ("settings: one click deletes the reported data and stops sharing", t_one_click_deletes_what_was_reported_and_turns_sharing_off),
     ("settings: deleting says so when nothing was shared", t_deletion_says_so_when_nothing_had_been_shared),
@@ -1772,6 +1803,9 @@ WIDGET_TESTS = [
     ("settings: closing waits for a running deletion", t_closing_waits_for_a_running_deletion),
     ("settings: a pending deletion is retried every fifteen minutes", t_a_pending_deletion_is_retried_every_fifteen_minutes),
     ("settings: Show in Finder opens the real data folder", t_show_data_folder_opens_the_real_folder),
+    ("notice: points at Settings, not a removed menu item", t_notice_tells_people_to_use_settings_not_a_menu_item_that_is_gone),
+    ("notice: Turn Off Sharing really turns it off", t_notice_turn_off_sharing_really_turns_it_off),
+    ("notice: OK leaves sharing on, and it is shown once", t_notice_ok_leaves_sharing_on_and_is_shown_once),
     ("review: taught merchants are applied, not asked", t_rev_taught_merchants_are_applied_not_asked),
     ("review: prompted column migrates from a reviewed-only database", t_rev_prompted_column_migrates_from_reviewed_only_schema),
 ]
