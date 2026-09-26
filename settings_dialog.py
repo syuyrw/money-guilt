@@ -9,8 +9,9 @@ from PyQt5.QtCore import Qt, QThread, QUrl, pyqtSignal
 from PyQt5.QtGui import QColor, QDesktopServices, QFontMetrics, QPalette
 from PyQt5.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                              QGroupBox, QHBoxLayout, QLabel, QPushButton,
-                             QSizePolicy, QSpinBox, QVBoxLayout)
+                             QMessageBox, QSizePolicy, QSpinBox, QVBoxLayout)
 
+import disconnect
 import paths
 import telemetry
 
@@ -32,6 +33,31 @@ DELETE_RESULTS = {
 }
 
 
+DISCONNECT_RESULTS = {
+    "disconnected": "Disconnected. Plaid no longer has access to your bank, and the "
+                    "saved token was removed from your Keychain. Your saved "
+                    "transactions are still on this Mac.",
+    "not_linked": "No bank account was linked.",
+    "unconfigured": "Plaid isn't set up on this Mac (its credentials are missing or "
+                    "invalid), so nothing was changed.",
+    "keychain": "Couldn't read your Keychain, so nothing was changed.",
+    "failed": "Couldn't reach Plaid, so nothing was changed and your token was "
+              "kept. Try again when you're online.",
+}
+
+CONFIRM_DISCONNECT = (
+    "Disconnect your bank account?\n\n"
+    "Money Guilt will ask Plaid to revoke its access, then remove the saved "
+    "token. Transactions already saved stay on this Mac. To use a bank again "
+    "you would link it again.")
+
+CONFIRM_ERASE = (
+    "Delete all saved transactions and accounts, and what you've taught the "
+    "app about merchants?\n\n"
+    "This can't be undone. It doesn't disconnect your bank, and it doesn't "
+    "remove anything you shared (use the buttons above for those).")
+
+
 class DeleteWorker(QThread):
     """Runs the deletion off the interface thread; it can wait on the network."""
     outcome = pyqtSignal(str)
@@ -45,11 +71,27 @@ class DeleteWorker(QThread):
         self.outcome.emit(result)
 
 
+class DisconnectWorker(QThread):
+    """Asks Plaid to revoke access off the interface thread."""
+    outcome = pyqtSignal(str)
+
+    def run(self):
+        try:
+            result = disconnect.disconnect_bank()
+        except Exception:
+            result = "failed"       # the token is still saved, so a retry is possible
+        self.outcome.emit(result)
+
+
 # Text width inside a group box: the fixed window width less the window's and
 # the group's margins. Deliberately a little under the real width, so a note is
 # measured as if it wrapped slightly more than it will: that leaves a touch of
 # slack at worst, and never clips a line.
 NOTE_WIDTH = 372
+
+
+def _count(n, noun):
+    return f"{n} {noun}" + ("" if n == 1 else "s")
 
 
 def _note(text):
@@ -74,6 +116,7 @@ def _note(text):
 
 class SettingsDialog(QDialog):
     deletion_finished = pyqtSignal(str)
+    disconnect_finished = pyqtSignal(str)
 
     def __init__(self, app_widget):
         # No Qt parent, on purpose: a child of the widget would inherit its dark
@@ -82,6 +125,7 @@ class SettingsDialog(QDialog):
         super().__init__(None)
         self.app_widget = app_widget
         self._worker = None
+        self._disconnect_worker = None
         self._loading = True
         self.setWindowTitle("Money Guilt Settings")
         self.setWindowFlags(Qt.Dialog | Qt.WindowStaysOnTopHint |
@@ -96,6 +140,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(self._build_privacy())
         layout.addWidget(self._build_display())
         layout.addWidget(self._build_startup())
+        layout.addWidget(self._build_bank())
         layout.addWidget(self._build_data())
 
         buttons = QDialogButtonBox(QDialogButtonBox.Close)
@@ -191,6 +236,26 @@ class SettingsDialog(QDialog):
         lay.addWidget(self.ask_checkbox)
         return box
 
+    def _build_bank(self):
+        box = QGroupBox("Bank account")
+        lay = QVBoxLayout(box)
+        self.bank_status_label = QLabel()
+        lay.addWidget(self.bank_status_label)
+        self.disconnect_button = QPushButton("Disconnect Bank Account\u2026")
+        self.disconnect_button.clicked.connect(self.disconnect_bank_clicked)
+        row = QHBoxLayout()
+        row.addWidget(self.disconnect_button)
+        row.addStretch()
+        lay.addLayout(row)
+        lay.addWidget(_note(
+            "Asks Plaid to revoke Money Guilt's access, then removes the saved "
+            "token. Transactions already saved stay on this Mac."))
+        self.bank_result = QLabel()
+        self.bank_result.setWordWrap(True)
+        self.bank_result.hide()
+        lay.addWidget(self.bank_result)
+        return box
+
     def _build_data(self):
         box = QGroupBox("Your data")
         lay = QVBoxLayout(box)
@@ -206,6 +271,20 @@ class SettingsDialog(QDialog):
         row.addWidget(self.folder_button)
         row.addStretch()
         lay.addLayout(row)
+
+        self.erase_button = QPushButton("Delete Local Data\u2026")
+        self.erase_button.clicked.connect(self.erase_clicked)
+        row = QHBoxLayout()
+        row.addWidget(self.erase_button)
+        row.addStretch()
+        lay.addLayout(row)
+        lay.addWidget(_note(
+            "Erases every saved transaction and account and everything you've "
+            "taught the app about merchants. It can't be undone."))
+        self.erase_result = QLabel()
+        self.erase_result.setWordWrap(True)
+        self.erase_result.hide()
+        lay.addWidget(self.erase_result)
         return box
 
     # ------------------------------------------------------ reading state
@@ -230,6 +309,7 @@ class SettingsDialog(QDialog):
                 index = self.rotation_combo.count() - 1
             self.rotation_combo.setCurrentIndex(index)
             self.refresh_status()
+            self.refresh_bank_status()
         finally:
             self._loading = was_loading
 
@@ -303,13 +383,59 @@ class SettingsDialog(QDialog):
         self.delete_button.setEnabled(True)
         self.deletion_finished.emit(outcome)
 
+    BANK_STATUS_TEXT = {
+        "linked": "A bank account is linked.",
+        "not_linked": "No bank account is linked.",
+        "unknown": "Couldn't read your Keychain, so the link status is unknown.",
+    }
+
+    def refresh_bank_status(self):
+        status = disconnect.bank_status()
+        self.bank_status_label.setText(self.BANK_STATUS_TEXT[status])
+        self.disconnect_button.setEnabled(status != "not_linked")
+
+    def _confirm(self, text):
+        """Ask before anything irreversible. Cancel is the default answer."""
+        return QMessageBox.question(
+            self, "Money Guilt", text, QMessageBox.Yes | QMessageBox.Cancel,
+            QMessageBox.Cancel) == QMessageBox.Yes
+
+    def disconnect_bank_clicked(self):
+        if self._disconnect_worker is not None and self._disconnect_worker.isRunning():
+            return
+        if not self._confirm(CONFIRM_DISCONNECT):
+            return
+        self.disconnect_button.setEnabled(False)
+        self.bank_result.setText("Disconnecting\u2026")
+        self.bank_result.show()
+        self._disconnect_worker = DisconnectWorker()
+        self._disconnect_worker.outcome.connect(self._disconnect_done)
+        self._disconnect_worker.start()
+
+    def _disconnect_done(self, outcome):
+        self.bank_result.setText(DISCONNECT_RESULTS.get(outcome, DISCONNECT_RESULTS["failed"]))
+        self.refresh_bank_status()
+        self.disconnect_finished.emit(outcome)
+
+    def erase_clicked(self):
+        if not self._confirm(CONFIRM_ERASE):
+            return
+        counts = disconnect.erase_local_data()
+        self.erase_result.setText(
+            f"Deleted {_count(counts['transactions'], 'transaction')} and "
+            f"{_count(counts['accounts'], 'account')}, and forgot what you'd "
+            "taught the app.")
+        self.erase_result.show()
+        self.app_widget.advance_stat()      # the widget must stop showing what's gone
+
     def show_data_folder(self):
         QDesktopServices.openUrl(QUrl.fromLocalFile(paths.data_dir()))
 
     def _wait_for_worker(self):
         # A running QThread must not be destroyed; the request gives up in 5 s.
-        if self._worker is not None:
-            self._worker.wait(8000)
+        for worker in (self._worker, self._disconnect_worker):
+            if worker is not None:
+                worker.wait(8000)
 
     def done(self, result):
         self._wait_for_worker()

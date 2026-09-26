@@ -68,7 +68,9 @@ Your data is protected by your Mac's own protections: file permissions that limi
 ## Your choices
 
 - **Stop sharing:** turn off sharing as described above.
-- **Delete your data:** quit the app and delete `~/Library/Application Support/MoneyGuilt` and `~/Library/Logs/MoneyGuilt.log`. Remove the Money Guilt entry from Keychain Access if you want the access token gone too. You can also revoke Money Guilt's connection to your bank through Plaid.
+- **Disconnect your bank:** use **Disconnect Bank Account…** in Settings. It tells Plaid to revoke Money Guilt's access first, and only then removes the access token from Keychain. If Plaid can't be reached, nothing changes and you can try again.
+- **Erase saved transactions:** use **Delete Local Data…** in Settings. It securely erases every saved transaction and account and everything you taught the app about merchants. It doesn't disconnect your bank or remove anything already shared.
+- **Delete everything by hand:** quit the app and delete `~/Library/Application Support/MoneyGuilt` and `~/Library/Logs/MoneyGuilt.log`. Remove the Money Guilt entry from Keychain Access if you want the access token gone too. You can also revoke Money Guilt's connection to your bank through Plaid.
 - **Delete your shared total:** use **Delete My Reported Data** in Settings, as described above.
 
 ## Children

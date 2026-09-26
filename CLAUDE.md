@@ -23,7 +23,7 @@ A PyQt5 macOS menu-bar widget that shows rotating "guilt" stats about wasteful s
 - `./make_app.sh` builds and installs `/Applications/MoneyGuilt.app`. Re-run it if the project folder moves. Code changes only need the widget relaunched, not a rebuild.
 - A running widget keeps its old code. After changing code, tell the user to restart it, or restart it only if they say so. When restarting, kill only the widget's own processes; never `pkill` by a broad pattern like `Python.app`.
 - The widget allows only one instance (lock file in the temp folder).
-- Run the tests before committing: `python3 test_app.py` (needs Qt, so the Homebrew Python) and `.venv/bin/python -m unittest test_security test_paths test_secure_store test_telemetry` (needs keyring/Flask, so the `.venv`).
+- Run the tests before committing: `.venv/bin/python test_app.py` (needs Qt and keyring, both in the `.venv`) and `.venv/bin/python -m unittest test_security test_paths test_secure_store test_telemetry test_plaid_client test_private_data test_disconnect` (needs keyring/Flask, so the `.venv`).
 - Wasted-dollar reporting (`telemetry.py`, `collector/server.py`) is on by default with an opt-out (Settings, plus a first-launch notice explaining it and offering Turn Off Sharing) and sends only an anonymous install ID and the running dollar total (no counts, names or vendors). Never add merchants, dates or per-transaction amounts to the report. Users can delete what they reported (Settings, or `python3 telemetry.py delete`): that erases the collector's row, turns sharing off, forgets the install ID, and retries every 15 minutes if the server can't be reached. Keep PRIVACY.md true to this. `python3 wasted_total.py` prints your local total; it is never shown in the widget.
 
 ## Behaviour decisions
@@ -56,3 +56,5 @@ Other decisions:
 - Confirm before anything hard to reverse or outward-facing that wasn't asked for. Look at a target before deleting or overwriting it.
 - Report results as they are: if a test fails or a step was skipped, say so.
 - Files that other sessions or the user changed on disk are deliberate; don't revert them.
+- `PLAID_ENV` must be exactly `sandbox` or `production` (unset means sandbox); anything else is an error, never production.
+- Settings has **Disconnect Bank Account…** (revokes at Plaid before deleting the Keychain token) and **Delete Local Data…** (secure erase of transactions, accounts and merchant lessons); both confirm with Cancel as the default.

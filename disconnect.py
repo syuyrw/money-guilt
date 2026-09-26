@@ -35,8 +35,9 @@ def _make_client():
     return plaid_client.PlaidClient()
 
 
-def bank_status(store=secure_store):
+def bank_status(store=None):
     """'linked', 'not_linked', or 'unknown' if the Keychain can't be read."""
+    store = store or secure_store       # looked up now, so tests can substitute it
     try:
         token = store.get_access_token()
     except store.SecureStoreError:
@@ -44,7 +45,7 @@ def bank_status(store=secure_store):
     return "linked" if token else "not_linked"
 
 
-def disconnect_bank(client=None, store=secure_store):
+def disconnect_bank(client=None, store=None):
     """Revoke Plaid's access, then forget the token.
 
     Returns "disconnected", "not_linked", "unconfigured" (Plaid credentials
@@ -52,6 +53,7 @@ def disconnect_bank(client=None, store=secure_store):
     read), or "failed" (Plaid couldn't be reached or refused). In every case
     except "disconnected" the token is left exactly as it was.
     """
+    store = store or secure_store
     try:
         token = store.get_access_token()
     except store.SecureStoreError:

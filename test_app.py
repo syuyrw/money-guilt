@@ -1354,6 +1354,53 @@ def with_telemetry(fn, url="https://collector.example", post_delete=None):
         fn()
 
 
+class FakeStore:
+    """Stands in for the Keychain module for the whole run, so no test can read
+    or delete the real Money Guilt token."""
+    class SecureStoreError(Exception):
+        pass
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self, token=None, unreadable=False):
+        self.token, self.unreadable = token, unreadable
+
+    def get_access_token(self):
+        if self.unreadable:
+            raise self.SecureStoreError("unreadable")
+        return self.token
+
+    def delete_access_token(self):
+        self.token = None
+
+
+class FakePlaid:
+    """Stands in for Plaid: records calls, and can be told to fail."""
+    def __init__(self):
+        self.reset()
+
+    def reset(self, error=None, gate=None):
+        self.error, self.gate, self.removed = error, gate, []
+
+    def remove_item(self, token):
+        self.removed.append(token)
+        if self.gate is not None:
+            self.gate.wait(5)
+        if self.error:
+            raise self.error
+        return True
+
+
+BANK_STORE = FakeStore()
+BANK_PLAID = FakePlaid()
+
+
+def fresh_bank(token=None, error=None, gate=None, unreadable=False):
+    BANK_STORE.reset(token, unreadable)
+    BANK_PLAID.reset(error, gate)
+
+
 def make_dialog():
     import settings_dialog
     return settings_dialog.SettingsDialog(WIDGET)
@@ -1673,6 +1720,210 @@ def t_a_pending_deletion_is_retried_every_fifteen_minutes():
     assert WIDGET.delete_retry_timer.isActive()
 
 
+def wait_for_signal(signal, seconds=5):
+    from PyQt5.QtCore import QEventLoop, QTimer
+    loop, got = QEventLoop(), []
+    signal.connect(lambda outcome: (got.append(outcome), loop.quit()))
+    QTimer.singleShot(int(seconds * 1000), loop.quit)
+    return loop, got
+
+
+def answer(reply):
+    """Patch the confirmation box so a test chooses Yes or Cancel."""
+    from unittest import mock
+    from PyQt5.QtWidgets import QMessageBox
+    return mock.patch.object(QMessageBox, 'question', return_value=(
+        QMessageBox.Yes if reply == "yes" else QMessageBox.Cancel))
+
+
+def t_bank_status_reflects_the_keychain():
+    fresh_bank(token="tok")
+    d = make_dialog()
+    assert 'is linked' in d.bank_status_label.text(), d.bank_status_label.text()
+    assert d.disconnect_button.isEnabled()
+    fresh_bank()
+    d = make_dialog()
+    assert 'No bank account' in d.bank_status_label.text()
+    assert not d.disconnect_button.isEnabled(), "nothing to disconnect"
+    fresh_bank(unreadable=True)
+    d = make_dialog()
+    assert 'unknown' in d.bank_status_label.text()
+    assert d.disconnect_button.isEnabled(), "still offered: it may well be linked"
+
+
+def t_disconnect_asks_first_and_cancel_is_the_default_answer():
+    from PyQt5.QtWidgets import QMessageBox
+    fresh_bank(token="tok")
+    d = make_dialog()
+    with answer("cancel") as question:
+        d.disconnect_button.click()
+    eq(question.call_count, 1)
+    args = question.call_args.args
+    assert 'Disconnect' in args[2], args[2]
+    eq(args[3], QMessageBox.Yes | QMessageBox.Cancel)
+    eq(args[4], QMessageBox.Cancel, "Cancel must be the default, for a step like this")
+    eq(BANK_PLAID.removed, [], "declining must not contact Plaid")
+    eq(BANK_STORE.token, "tok")
+    assert d.disconnect_button.isEnabled()
+
+
+def t_confirmed_disconnect_revokes_then_forgets_the_token():
+    fresh_bank(token="tok")
+    d = make_dialog()
+    loop, got = wait_for_signal(d.disconnect_finished)
+    with answer("yes"):
+        d.disconnect_button.click()
+    loop.exec_()
+    eq(got, ["disconnected"])
+    eq(BANK_PLAID.removed, ["tok"])
+    eq(BANK_STORE.token, None)
+    assert 'Disconnected' in d.bank_result.text(), d.bank_result.text()
+    assert 'still on this Mac' in d.bank_result.text()
+    assert 'No bank account' in d.bank_status_label.text()
+    assert not d.disconnect_button.isEnabled()
+
+
+def t_a_failed_disconnect_keeps_the_token_and_can_be_retried():
+    fresh_bank(token="tok", error=OSError("offline"))
+    d = make_dialog()
+    loop, got = wait_for_signal(d.disconnect_finished)
+    with answer("yes"):
+        d.disconnect_button.click()
+    loop.exec_()
+    eq(got, ["failed"])
+    eq(BANK_STORE.token, "tok", "the token must survive a failed revoke")
+    assert 'nothing was changed' in d.bank_result.text()
+    assert d.disconnect_button.isEnabled(), "and it can be tried again"
+    BANK_PLAID.error = None
+    loop, got = wait_for_signal(d.disconnect_finished)
+    with answer("yes"):
+        d.disconnect_button.click()
+    loop.exec_()
+    eq(got, ["disconnected"])
+
+
+def t_the_disconnect_button_is_blocked_while_it_runs():
+    import threading
+    gate = threading.Event()
+    fresh_bank(token="tok", gate=gate)
+    d = make_dialog()
+    loop, got = wait_for_signal(d.disconnect_finished, seconds=8)
+    with answer("yes") as question:
+        d.disconnect_button.click()
+        QT_APP.processEvents()
+        eq(d.disconnect_button.isEnabled(), False)
+        assert 'Disconnecting' in d.bank_result.text()
+        d.disconnect_bank_clicked()          # a second attempt is ignored outright
+        eq(question.call_count, 1, "it must not even ask again")
+        gate.set()
+        loop.exec_()
+    eq(got, ["disconnected"])
+    eq(len(BANK_PLAID.removed), 1, "exactly one request")
+
+
+def t_closing_waits_for_a_running_disconnect():
+    import threading
+    gate = threading.Event()
+    fresh_bank(token="tok", gate=gate)
+    d = make_dialog()
+    with answer("yes"):
+        d.disconnect_button.click()
+    threading.Timer(0.3, gate.set).start()
+    d.done(0)                                 # must not destroy a running thread
+    assert not d._disconnect_worker.isRunning()
+
+
+def t_disconnect_without_plaid_credentials_changes_nothing():
+    from unittest import mock
+    import disconnect
+    fresh_bank(token="tok")
+    d = make_dialog()
+    loop, got = wait_for_signal(d.disconnect_finished)
+    with answer("yes"), mock.patch.object(disconnect, '_make_client',
+                                          side_effect=ValueError("Missing credentials")):
+        d.disconnect_button.click()
+        loop.exec_()
+    eq(got, ["unconfigured"])
+    eq(BANK_STORE.token, "tok")
+    assert "isn't set up" in d.bank_result.text()
+
+
+def seed_erasable(count=3):
+    seed_reviewable(count)
+
+
+def rows_left():
+    return len(database.get_all_transactions(days=99999))
+
+
+def t_erase_asks_first_and_cancel_keeps_everything():
+    from unittest import mock
+    def body():
+        seed_erasable(3)
+        d = make_dialog()
+        with answer("cancel") as question, mock.patch.object(WIDGET, 'advance_stat') as adv:
+            d.erase_button.click()
+        eq(question.call_count, 1)
+        assert "can't be undone" in question.call_args.args[2]
+        eq(question.call_args.args[4], __import__('PyQt5.QtWidgets', fromlist=['QMessageBox']).QMessageBox.Cancel)
+        eq(rows_left(), 3)
+        adv.assert_not_called()
+        assert d.erase_result.isHidden()
+    with_temp_db(body)
+
+
+def t_confirmed_erase_deletes_everything_and_refreshes_the_widget():
+    from unittest import mock
+    def body():
+        seed_erasable(3)
+        d = make_dialog()
+        with answer("yes"), mock.patch.object(WIDGET, 'advance_stat') as adv:
+            d.erase_button.click()
+        eq(rows_left(), 0)
+        eq(adv.call_count, 1, "the widget must stop showing what was erased")
+        text = d.erase_result.text()
+        assert 'Deleted 3 transactions and 1 account,' in text, text
+    with_temp_db(body)
+
+
+def t_erase_wording_is_singular_when_it_should_be():
+    from unittest import mock
+    def body():
+        seed_erasable(1)
+        d = make_dialog()
+        with answer("yes"), mock.patch.object(WIDGET, 'advance_stat'):
+            d.erase_button.click()
+        assert 'Deleted 1 transaction and 1 account,' in d.erase_result.text(), d.erase_result.text()
+    with_temp_db(body)
+
+
+def t_erase_leaves_the_bank_link_and_sharing_alone():
+    from unittest import mock
+    import telemetry
+    def inner():
+        def body():
+            seed_erasable(2)
+            fresh_bank(token="tok")
+            telemetry.set_enabled(True)
+            d = make_dialog()
+            with answer("yes"), mock.patch.object(WIDGET, 'advance_stat'):
+                d.erase_button.click()
+            eq(BANK_STORE.token, "tok", "erasing data must not disconnect the bank")
+            eq(BANK_PLAID.removed, [])
+            eq(telemetry.is_enabled(), True, "nor change sharing")
+        with_temp_db(body)
+    with_telemetry(inner)
+
+
+def t_the_confirmations_say_what_they_do_and_do_not_do():
+    import settings_dialog as sd
+    for text in (sd.CONFIRM_DISCONNECT,):
+        assert 'revoke' in text and 'stay on this Mac' in text, text
+    assert "can't be undone" in sd.CONFIRM_ERASE
+    assert "doesn't disconnect your bank" in sd.CONFIRM_ERASE
+    assert "doesn't remove anything you shared" in sd.CONFIRM_ERASE
+
+
 def t_show_data_folder_opens_the_real_folder():
     from unittest import mock
     from PyQt5.QtCore import QUrl
@@ -1802,6 +2053,18 @@ WIDGET_TESTS = [
     ("settings: the delete button is blocked while it runs", t_the_button_is_blocked_while_a_deletion_is_running),
     ("settings: closing waits for a running deletion", t_closing_waits_for_a_running_deletion),
     ("settings: a pending deletion is retried every fifteen minutes", t_a_pending_deletion_is_retried_every_fifteen_minutes),
+    ("bank: status reflects the Keychain", t_bank_status_reflects_the_keychain),
+    ("bank: disconnect asks first and Cancel is the default", t_disconnect_asks_first_and_cancel_is_the_default_answer),
+    ("bank: a confirmed disconnect revokes then forgets the token", t_confirmed_disconnect_revokes_then_forgets_the_token),
+    ("bank: a failed disconnect keeps the token and can be retried", t_a_failed_disconnect_keeps_the_token_and_can_be_retried),
+    ("bank: the disconnect button is blocked while it runs", t_the_disconnect_button_is_blocked_while_it_runs),
+    ("bank: closing waits for a running disconnect", t_closing_waits_for_a_running_disconnect),
+    ("bank: no Plaid credentials changes nothing", t_disconnect_without_plaid_credentials_changes_nothing),
+    ("erase: asks first and Cancel keeps everything", t_erase_asks_first_and_cancel_keeps_everything),
+    ("erase: confirming deletes everything and refreshes the widget", t_confirmed_erase_deletes_everything_and_refreshes_the_widget),
+    ("erase: wording is singular when it should be", t_erase_wording_is_singular_when_it_should_be),
+    ("erase: leaves the bank link and sharing alone", t_erase_leaves_the_bank_link_and_sharing_alone),
+    ("bank: the confirmations say what they do and do not do", t_the_confirmations_say_what_they_do_and_do_not_do),
     ("settings: Show in Finder opens the real data folder", t_show_data_folder_opens_the_real_folder),
     ("notice: points at Settings, not a removed menu item", t_notice_tells_people_to_use_settings_not_a_menu_item_that_is_gone),
     ("notice: Turn Off Sharing really turns it off", t_notice_turn_off_sharing_really_turns_it_off),
@@ -1845,6 +2108,13 @@ def main():
     SANDBOX = tempfile.mkdtemp(prefix='money_guilt_tests_')
     database.DATABASE_PATH = os.path.join(SANDBOX, 'test.db')
 
+    from unittest import mock
+    import disconnect
+    bank_patches = [mock.patch.object(disconnect, 'secure_store', BANK_STORE),
+                    mock.patch.object(disconnect, '_make_client', lambda: BANK_PLAID)]
+    for patch in bank_patches:
+        patch.start()
+
     try:
         for name, fn in DATABASE_TESTS:
             check(name, fn)
@@ -1871,6 +2141,8 @@ def main():
         for name, fn in INTEGRATION_TESTS:
             check(name, fn)
     finally:
+        for patch in bank_patches:
+            patch.stop()
         shutil.rmtree(SANDBOX, ignore_errors=True)
 
     print()
