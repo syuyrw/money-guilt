@@ -6,3 +6,19 @@ __pycache__/
 *.pyc
 .venv/
 MoneyGuilt*.app/
+
+# Data and credentials never belong here. Private files live in
+# ~/Library/Application Support/MoneyGuilt, and transactions only in its database.
+telemetry.json
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.csv
+*.tsv
+*.ofx
+*.qfx
+*.xls
+*.xlsx
+transactions*.json

@@ -15,6 +15,7 @@ A PyQt5 macOS menu-bar widget that shows rotating "guilt" stats about wasteful s
 - The database, `.env` and `merchant_overrides.json` live in `~/Library/Application Support/MoneyGuilt` (owner-only, not iCloud-synced). `paths.py` owns the location. Never write them back into the project folder.
 - The Plaid access token lives in the macOS Keychain (`secure_store.py`), with no plaintext fallback.
 - Never print or log secrets, tokens, or transaction details. Keep log files owner-only.
+- **Transaction data lives only in the local database, never in the repo.** Nothing derived from it may be committed or pushed: no exports, screenshots of amounts, sample rows, or real merchant/amount pairs in tests, docs or fixtures (use invented data). `check_private_data.py` enforces it: it compares every commit against the transaction/account IDs in the local database, your Plaid token, merchant-plus-exact-amount lines, and data-shaped file names, and never prints what it found. `hooks/pre-commit` runs it on staged changes and `hooks/pre-push` on every commit about to leave the machine (pushes are automatic, so this is the last check). After cloning, run `./install_hooks.sh` once. `./security_check.sh` also scans the whole history.
 
 ## Running and testing
 

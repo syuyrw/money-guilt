@@ -1,0 +1,22 @@
+#!/bin/bash
+# Last check before anything leaves this machine. Pushes happen automatically,
+# so this looks at every commit about to go out, not just the newest one.
+here="$(cd "$(dirname "$0")" && pwd)"
+root="$(cd "$here/.." && pwd)"
+PY="$root/.venv/bin/python"; [ -x "$PY" ] || PY=python3
+zero=0000000000000000000000000000000000000000
+
+# stdin, one line per ref: <local ref> <local sha> <remote ref> <remote sha>
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue          # deleting a branch: nothing to send
+  if [ "$remote_sha" = "$zero" ]; then
+    args=(--range "$local_sha" --exclude-remotes)   # a new branch: everything the remote lacks
+  else
+    args=(--range "$remote_sha..$local_sha")
+  fi
+  "$PY" "$root/check_private_data.py" "${args[@]}" || {
+    echo "pre-push: refusing to push. Nothing was sent." >&2
+    exit 1
+  }
+done
+exit 0
