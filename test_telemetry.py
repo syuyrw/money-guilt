@@ -29,18 +29,28 @@ class Telemetry(unittest.TestCase):
     def wasted(self):
         return {"total": 317.194, "count": 9}
 
-    def test_off_by_default_sends_nothing(self):
+    def test_on_by_default_when_a_collector_is_set(self):
+        self.assertTrue(telemetry.is_enabled())
+        self.assertTrue(telemetry.report_now(self.wasted, self.post))
+        self.assertEqual(len(self.sent), 1)
+
+    def test_opting_out_sends_nothing(self):
+        telemetry.set_enabled(False)
+        self.assertFalse(telemetry.is_enabled())
         self.assertFalse(telemetry.report_now(self.wasted, self.post))
         self.assertEqual(self.sent, [])
 
-    def test_enabled_but_no_collector_sends_nothing(self):
-        telemetry.set_enabled(True)
+    def test_notice_shows_until_marked(self):
+        self.assertTrue(telemetry.needs_notice())
+        telemetry.mark_notice_shown()
+        self.assertFalse(telemetry.needs_notice())
+
+    def test_no_collector_sends_nothing(self):
         del os.environ["MONEY_GUILT_COLLECTOR_URL"]
         self.assertFalse(telemetry.report_now(self.wasted, self.post))
         self.assertEqual(self.sent, [])
 
     def test_report_holds_only_the_total_count_and_random_id(self):
-        telemetry.set_enabled(True)
         self.assertTrue(telemetry.report_now(self.wasted, self.post))
         url, report = self.sent[0]
         self.assertEqual(url, "https://collector.example")
@@ -49,7 +59,6 @@ class Telemetry(unittest.TestCase):
         self.assertEqual(report["wasted_count"], 9)
 
     def test_unchanged_total_is_not_sent_twice_but_a_change_is(self):
-        telemetry.set_enabled(True)
         telemetry.report_now(self.wasted, self.post)
         self.assertFalse(telemetry.report_now(self.wasted, self.post))
         self.assertTrue(telemetry.report_now(lambda: {"total": 400, "count": 10}, self.post))
@@ -63,7 +72,7 @@ class Telemetry(unittest.TestCase):
         self.assertTrue(telemetry.report_now(self.wasted, self.post))
 
     def test_install_id_is_stable_and_disable_stops_reports(self):
-        telemetry.set_enabled(True)
+        telemetry.report_now(self.wasted, self.post)
         first = telemetry.load_config()["install_id"]
         telemetry.set_enabled(False)
         telemetry.set_enabled(True)
@@ -82,7 +91,7 @@ class Telemetry(unittest.TestCase):
             self.assertEqual(telemetry.collector_url(), expected, value)
 
     def test_config_file_is_owner_only(self):
-        telemetry.set_enabled(True)
+        telemetry.set_enabled(False)
         mode = os.stat(os.path.join(DATA_DIR, "telemetry.json")).st_mode & 0o777
         self.assertEqual(mode, 0o600)
 

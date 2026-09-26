@@ -6,7 +6,7 @@ import logging
 # Set Qt plugin path for macOS
 os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = '/usr/local/lib/python3.14/site-packages/PyQt5/Qt5/plugins'
 
-from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSystemTrayIcon, QMenu
+from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSystemTrayIcon, QMenu, QMessageBox
 from PyQt5.QtCore import Qt, QTimer, QSize, QPoint, QSettings, pyqtSignal, QRect, QRectF, QLockFile, QDir
 from PyQt5.QtGui import QFont, QFontMetrics, QCursor, QPainter, QPen, QColor, QBrush, QPixmap, QIcon, QPainterPath, QRegion, QLinearGradient
 from stats import get_random_stat, get_all_stats
@@ -327,6 +327,11 @@ class MoneyGuiltWidget(QWidget):
         self.capture_action.setChecked(self.hide_from_capture)
         self.capture_action.toggled.connect(self.set_hide_from_capture)
 
+        self.share_total_action = tray_menu.addAction("Share Anonymous Wasted Total")
+        self.share_total_action.setCheckable(True)
+        self.share_total_action.setChecked(telemetry.is_enabled())
+        self.share_total_action.toggled.connect(telemetry.set_enabled)
+
         tray_menu.addSeparator()
 
         # Categorize transactions
@@ -389,6 +394,31 @@ class MoneyGuiltWidget(QWidget):
         self._dim_overlay.setVisible(dimmed)
         if dimmed:
             self._dim_overlay.raise_()
+
+    def show_sharing_notice(self):
+        """Once, say what the anonymous total is and how to turn it off"""
+        if not telemetry.needs_notice():
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle("Money Guilt")
+        box.setText("Money Guilt shares one anonymous number.")
+        box.setInformativeText(
+            "It reports your total wasted dollars, a transaction count, and a "
+            "random ID that isn't linked to you. No merchants, dates, or "
+            "individual purchases are ever sent.\n\n"
+            "You can change this any time from the menu bar icon: "
+            "Share Anonymous Wasted Total.")
+        box.addButton("OK", QMessageBox.AcceptRole)
+        turn_off = box.addButton("Turn Off Sharing", QMessageBox.DestructiveRole)
+        box.exec_()
+        if box.clickedButton() is turn_off:
+            self.share_total_action.setChecked(False)
+        telemetry.mark_notice_shown()
+
+    def startup(self):
+        self.show_sharing_notice()
+        self.prompt_for_new_transactions()
+        telemetry.report_in_background()
 
     def prompt_for_new_transactions(self):
         """Startup prompt: ask the user to categorize a few new transactions.
@@ -958,7 +988,6 @@ def main():
         sys.exit(0)
 
     init_db()
-    telemetry.report_in_background()
 
     # Create and show widget
     widget = MoneyGuiltWidget()
@@ -976,7 +1005,7 @@ def main():
     logger.info(f"Widget shown at ({pos.x()}, {pos.y()})")
 
     # Ask about new transactions once the event loop is running
-    QTimer.singleShot(0, widget.prompt_for_new_transactions)
+    QTimer.singleShot(0, widget.startup)
 
     sys.exit(app.exec_())
 

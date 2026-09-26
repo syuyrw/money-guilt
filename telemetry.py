@@ -10,10 +10,10 @@ No merchants, dates, individual amounts, balances or Plaid data ever leave the
 machine. The collector keeps the latest total per install_id, so repeated
 reports never double count.
 
-Off by default. Reporting happens only when BOTH are true:
-    * the user turned it on:  python3 telemetry.py enable
-    * a collector is set:     MONEY_GUILT_COLLECTOR_URL=https://... in the
-                              private .env (paths.env_path())
+On by default, and easy to turn off: the tray menu's "Share Anonymous Wasted
+Total" item, or python3 telemetry.py disable. The first launch shows a notice
+saying what is shared. Nothing is sent unless a collector is set:
+    MONEY_GUILT_COLLECTOR_URL=https://... in the private .env (paths.env_path())
 
     python3 telemetry.py status | enable | disable | send
 """
@@ -59,14 +59,24 @@ def save_config(config):
 
 
 def is_enabled():
-    return load_config().get("enabled") is True
+    """On unless the user turned it off"""
+    return load_config().get("enabled") is not False
 
 
 def set_enabled(enabled):
     config = load_config()
     config["enabled"] = bool(enabled)
-    if enabled and not config.get("install_id"):
-        config["install_id"] = str(uuid.uuid4())
+    save_config(config)
+
+
+def needs_notice():
+    """True until the user has been told what is shared"""
+    return load_config().get("notice_shown") is not True
+
+
+def mark_notice_shown():
+    config = load_config()
+    config["notice_shown"] = True
     save_config(config)
 
 
@@ -108,8 +118,11 @@ def report_now(get_wasted=None, post=_post):
         paths.load_env()
         config = load_config()
         url = collector_url()
-        if config.get("enabled") is not True or not config.get("install_id") or not url:
+        if config.get("enabled") is False or not url:
             return False
+        if not config.get("install_id"):
+            config["install_id"] = str(uuid.uuid4())
+            save_config(config)
 
         if get_wasted is None:
             from database import get_total_wasted as get_wasted
@@ -137,7 +150,7 @@ def report_in_background():
 
 def _status():
     config = load_config()
-    print("Reporting:  ", "ON" if config.get("enabled") is True else "off")
+    print("Reporting:  ", "ON" if is_enabled() else "off")
     print("Collector:  ", collector_url() or "not set (MONEY_GUILT_COLLECTOR_URL)")
     print("Install ID: ", config.get("install_id") or "none yet")
 
