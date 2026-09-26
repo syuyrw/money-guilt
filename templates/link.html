@@ -23,7 +23,7 @@
     </div>
 
     <script>
-        const linkToken = "{{ link_token }}";
+        const linkToken = {{ link_token|tojson }};
         const debugLog = document.getElementById('debugLog');
         let plaidHandler = null;
 
@@ -47,7 +47,7 @@
         }
 
         log('Page loaded');
-        log('Link Token: ' + linkToken);
+        log('Link token ' + (linkToken ? 'received' : 'missing'));
         log('Plaid SDK loaded: ' + (typeof Plaid !== 'undefined'));
 
         if (!linkToken) {
@@ -85,7 +85,8 @@
                 },
                 onSuccess: (publicToken, metadata) => {
                     log('Success! Public token received');
-                    log('Metadata: ' + JSON.stringify(metadata));
+                    const bank = metadata && metadata.institution && metadata.institution.name;
+                    log('Linked: ' + (bank || 'unknown institution'));
                     exchangeToken(publicToken);
                 },
                 onExit: (err, metadata) => {
