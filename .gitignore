@@ -10,6 +10,7 @@ MoneyGuilt*.app/
 # Data and credentials never belong here. Private files live in
 # ~/Library/Application Support/MoneyGuilt, and transactions only in its database.
 telemetry.json
+plaid_sync.json
 *.db-journal
 *.db-wal
 *.db-shm

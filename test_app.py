@@ -1375,13 +1375,31 @@ class FakeStore:
         self.token = None
 
 
+class FakeAccount:
+    def __init__(self, account_id="a1"):
+        self.account_id, self.name, self.type, self.subtype = account_id, "Checking", None, None
+
+        class _Balances:
+            current = 100.0
+        self.balances = _Balances()
+
+
+class FakeTransaction:
+    def __init__(self, transaction_id="t1"):
+        self.transaction_id, self.account_id = transaction_id, "a1"
+        self.date, self.name, self.amount = "2026-01-01", "Widget Store", 12.34
+        self.personal_finance_category = None
+        self.datetime = self.authorized_datetime = None
+
+
 class FakePlaid:
     """Stands in for Plaid: records calls, and can be told to fail."""
     def __init__(self):
         self.reset()
 
     def reset(self, error=None, gate=None):
-        self.error, self.gate, self.removed = error, gate, []
+        self.error, self.gate, self.removed, self.sync_calls = error, gate, [], []
+        self.accounts, self.transactions = [FakeAccount()], [FakeTransaction()]
 
     def remove_item(self, token):
         self.removed.append(token)
@@ -1390,6 +1408,20 @@ class FakePlaid:
         if self.error:
             raise self.error
         return True
+
+    def get_accounts(self, token):
+        self.sync_calls.append(("accounts", token))
+        if self.gate is not None:
+            self.gate.wait(5)
+        if self.error:
+            raise self.error
+        return self.accounts
+
+    def get_transactions(self, token, start_date=None, end_date=None):
+        self.sync_calls.append(("transactions", token))
+        if self.error:
+            raise self.error
+        return self.transactions
 
 
 BANK_STORE = FakeStore()
@@ -1488,7 +1520,8 @@ def t_startup_prompt_follows_the_setting():
             WIDGET.set_ask_categorize(enabled)
             with mock.patch.object(WIDGET, 'prompt_for_new_transactions') as prompt, \
                  mock.patch.object(WIDGET, 'show_sharing_notice'), \
-                 mock.patch.object(telemetry, 'report_in_background') as report:
+                 mock.patch.object(telemetry, 'report_in_background') as report, \
+                 mock.patch.object(WIDGET, 'run_plaid_sync'):
                 WIDGET.startup()
             eq(prompt.called, enabled)
             assert report.called, "reporting still runs at startup either way"
@@ -1924,6 +1957,107 @@ def t_the_confirmations_say_what_they_do_and_do_not_do():
     assert "doesn't remove anything you shared" in sd.CONFIRM_ERASE
 
 
+def fresh_sync():
+    """Clear the sandboxed once-a-day record, on top of the usual fresh_bank()."""
+    import plaid_sync
+    fresh_bank()
+    try:
+        os.remove(plaid_sync._config_path())
+    except OSError:
+        pass
+
+
+def t_run_plaid_sync_does_nothing_without_a_linked_bank():
+    fresh_sync()
+    WIDGET.run_plaid_sync()
+    loop, got = wait_for_signal(WIDGET._sync_worker.finished_sync)
+    loop.exec_()
+    eq(got, ["not_linked"])
+    eq(BANK_PLAID.sync_calls, [])
+
+
+def t_a_successful_sync_saves_data_and_refreshes_the_widget():
+    from unittest import mock
+    import plaid_sync
+    fresh_sync()
+    fresh_bank(token="tok")
+    with mock.patch.object(WIDGET, 'advance_stat') as adv:
+        WIDGET.run_plaid_sync()
+        loop, got = wait_for_signal(WIDGET._sync_worker.finished_sync)
+        loop.exec_()
+    eq(got, ["synced"])
+    eq(BANK_PLAID.sync_calls, [("accounts", "tok"), ("transactions", "tok")])
+    eq(adv.call_count, 1, "the widget must refresh once new data arrives")
+    assert plaid_sync.has_synced_today()
+
+
+def t_a_second_sync_the_same_day_makes_no_further_plaid_calls():
+    from unittest import mock
+    fresh_sync()
+    fresh_bank(token="tok")
+    with mock.patch.object(WIDGET, 'advance_stat'):
+        WIDGET.run_plaid_sync()
+        loop, got = wait_for_signal(WIDGET._sync_worker.finished_sync)
+        loop.exec_()
+        eq(got, ["synced"])
+        WIDGET.run_plaid_sync()
+        loop, got = wait_for_signal(WIDGET._sync_worker.finished_sync)
+        loop.exec_()
+    eq(got, ["already_synced_today"])
+    eq(len(BANK_PLAID.sync_calls), 2, "no second round of Plaid calls")
+
+
+def t_run_plaid_sync_ignores_a_call_while_one_is_already_running():
+    import threading
+    gate = threading.Event()
+    fresh_sync()
+    fresh_bank(token="tok", gate=gate)
+    try:
+        WIDGET.run_plaid_sync()
+        QT_APP.processEvents()
+        worker = WIDGET._sync_worker
+        assert worker.isRunning()
+        WIDGET.run_plaid_sync()
+        eq(WIDGET._sync_worker, worker, "no second worker was started")
+    finally:
+        gate.set()
+    loop, got = wait_for_signal(worker.finished_sync)
+    loop.exec_()
+    eq(got, ["synced"])
+    eq(len(BANK_PLAID.sync_calls), 2, "exactly one pull's worth of calls")
+
+
+def t_a_failed_sync_is_not_marked_done_so_it_retries_next_time():
+    import plaid_sync
+    fresh_sync()
+    fresh_bank(token="tok", error=OSError("offline"))
+    WIDGET.run_plaid_sync()
+    loop, got = wait_for_signal(WIDGET._sync_worker.finished_sync)
+    loop.exec_()
+    eq(got, ["failed"])
+    assert not plaid_sync.has_synced_today()
+
+
+def t_the_midnight_timer_reschedules_itself_every_time_it_fires():
+    from unittest import mock
+    fresh_sync()
+    before = WIDGET.sync_timer.remainingTime()
+    assert before > 0, "the daily sync timer should already be scheduled"
+    with mock.patch.object(WIDGET, 'run_plaid_sync') as run:
+        WIDGET._midnight_sync()
+    assert run.called, "midnight must trigger a sync"
+    assert WIDGET.sync_timer.remainingTime() > 0, "a run was scheduled for the next midnight"
+
+
+def t_the_daily_sync_always_lands_on_local_midnight():
+    from datetime import datetime, timedelta
+    ms = WIDGET._ms_until_next_midnight()
+    assert 0 < ms <= 24 * 3600 * 1000, ms
+    fires_at = datetime.now() + timedelta(milliseconds=ms)
+    eq((fires_at.hour, fires_at.minute), (0, 0))
+    assert fires_at.second <= 1, fires_at
+
+
 def t_show_data_folder_opens_the_real_folder():
     from unittest import mock
     from PyQt5.QtCore import QUrl
@@ -2065,6 +2199,13 @@ WIDGET_TESTS = [
     ("erase: wording is singular when it should be", t_erase_wording_is_singular_when_it_should_be),
     ("erase: leaves the bank link and sharing alone", t_erase_leaves_the_bank_link_and_sharing_alone),
     ("bank: the confirmations say what they do and do not do", t_the_confirmations_say_what_they_do_and_do_not_do),
+    ("plaid sync: does nothing without a linked bank", t_run_plaid_sync_does_nothing_without_a_linked_bank),
+    ("plaid sync: a successful sync saves data and refreshes the widget", t_a_successful_sync_saves_data_and_refreshes_the_widget),
+    ("plaid sync: a second sync the same day makes no further calls", t_a_second_sync_the_same_day_makes_no_further_plaid_calls),
+    ("plaid sync: ignores a call while one is already running", t_run_plaid_sync_ignores_a_call_while_one_is_already_running),
+    ("plaid sync: a failure is not marked done, so it retries", t_a_failed_sync_is_not_marked_done_so_it_retries_next_time),
+    ("plaid sync: the midnight timer reschedules itself", t_the_midnight_timer_reschedules_itself_every_time_it_fires),
+    ("plaid sync: always lands on local midnight", t_the_daily_sync_always_lands_on_local_midnight),
     ("settings: Show in Finder opens the real data folder", t_show_data_folder_opens_the_real_folder),
     ("notice: points at Settings, not a removed menu item", t_notice_tells_people_to_use_settings_not_a_menu_item_that_is_gone),
     ("notice: Turn Off Sharing really turns it off", t_notice_turn_off_sharing_really_turns_it_off),
@@ -2110,8 +2251,13 @@ def main():
 
     from unittest import mock
     import disconnect
+    import plaid_sync
     bank_patches = [mock.patch.object(disconnect, 'secure_store', BANK_STORE),
-                    mock.patch.object(disconnect, '_make_client', lambda: BANK_PLAID)]
+                    mock.patch.object(disconnect, '_make_client', lambda: BANK_PLAID),
+                    mock.patch.object(plaid_sync, 'secure_store', BANK_STORE),
+                    mock.patch.object(plaid_sync, '_make_client', lambda: BANK_PLAID),
+                    mock.patch.object(plaid_sync, '_config_path',
+                                      lambda: sandbox_path('plaid_sync.json'))]
     for patch in bank_patches:
         patch.start()
 

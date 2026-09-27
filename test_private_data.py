@@ -146,7 +146,7 @@ class FileNames(unittest.TestCase):
         for name in ("money_guilt.db", "x.sqlite", "x.sqlite3", "export.csv",
                      "bank.ofx", "bank.qfx", "sheet.xlsx", "sub/dir/data.tsv",
                      ".env", "sub/.env", "access_token.txt", "merchant_overrides.json",
-                     "telemetry.json", "transactions.json", "transactions_2026.json",
+                     "telemetry.json", "plaid_sync.json", "transactions.json", "transactions_2026.json",
                      "key.pem", "id.key", "money_guilt.db-wal", "data.DB", "A.CSV"):
             self.assertTrue(cpd.FORBIDDEN_NAME.search(name), name)
 
@@ -401,7 +401,7 @@ class ProjectHygiene(unittest.TestCase):
         with open(os.path.join(PROJECT, ".gitignore")) as fh:
             ignored = fh.read().split()
         for pattern in (".env", "access_token.txt", "*.db", "merchant_overrides.json",
-                        "telemetry.json", "*.csv", "*.sqlite", "*.ofx", "*.xlsx",
+                        "telemetry.json", "plaid_sync.json", "*.csv", "*.sqlite", "*.ofx", "*.xlsx",
                         "transactions*.json"):
             self.assertIn(pattern, ignored)
 

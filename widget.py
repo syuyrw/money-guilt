@@ -7,11 +7,11 @@ import logging
 os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = '/usr/local/lib/python3.14/site-packages/PyQt5/Qt5/plugins'
 
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSystemTrayIcon, QMenu, QMessageBox, QAction
-from PyQt5.QtCore import QUrl, Qt, QTimer, QSize, QPoint, QSettings, pyqtSignal, QRect, QRectF, QLockFile, QDir
+from PyQt5.QtCore import QUrl, Qt, QTimer, QThread, QSize, QPoint, QSettings, pyqtSignal, QRect, QRectF, QLockFile, QDir
 from PyQt5.QtGui import QDesktopServices, QFont, QFontMetrics, QCursor, QPainter, QPen, QColor, QBrush, QPixmap, QIcon, QPainterPath, QRegion, QLinearGradient
 from stats import get_random_stat, get_all_stats
 from categorization_dialog import CategorizationDialog
-from datetime import datetime
+from datetime import datetime, timedelta
 from database import init_db
 import telemetry
 import feedback
@@ -24,6 +24,28 @@ logger = logging.getLogger(__name__)
 
 # Dollar figures that represent waste, and the ring's filled arc.
 WASTED_COLOR = "rgb(255, 100, 100)"
+
+# Outcomes that mean there was nothing to sync (no bank linked, or already
+# done today) rather than something going wrong; only the rest are logged as
+# a problem.
+SYNC_UNEXCEPTIONAL = {"already_synced_today", "not_linked"}
+
+
+class PlaidSyncWorker(QThread):
+    """Pulls the day's transactions off the interface thread."""
+    finished_sync = pyqtSignal(str)
+
+    def __init__(self, force=False):
+        super().__init__()
+        self.force = force
+
+    def run(self):
+        import plaid_sync
+        try:
+            outcome = plaid_sync.sync_now(force=self.force)
+        except Exception:
+            outcome = "failed"
+        self.finished_sync.emit(outcome)
 
 
 class _DimOverlay(QWidget):
@@ -429,6 +451,9 @@ class MoneyGuiltWidget(QWidget):
         if self.ask_categorize_at_start:
             self.prompt_for_new_transactions()
         telemetry.report_in_background()
+        # No-op if today's pull already happened before this launch; catches
+        # up a day the widget wasn't running at midnight for.
+        self.run_plaid_sync()
 
     def prompt_for_new_transactions(self):
         """Startup prompt: ask the user to categorize a few new transactions.
@@ -618,8 +643,57 @@ class MoneyGuiltWidget(QWidget):
         self.delete_retry_timer.timeout.connect(telemetry.retry_pending_delete_in_background)
         self.delete_retry_timer.start(900000)
 
+        # Pull transactions from Plaid once a day, at local midnight. Whether
+        # that has already happened today is on disk (plaid_sync.py), not just
+        # in memory, so restarting the widget doesn't trigger a second pull;
+        # startup() below catches up a day the widget wasn't running for.
+        self._sync_worker = None
+        self.sync_timer = QTimer()
+        self.sync_timer.setSingleShot(True)
+        self.sync_timer.timeout.connect(self._midnight_sync)
+        self._schedule_daily_sync()
+
         logger.info(f"Timers started: stat rotation every {self.rotation_minutes} minutes"
                     if self.rotation_minutes else "Timers started: stat rotation off")
+
+    def _ms_until_next_midnight(self):
+        now = datetime.now()
+        midnight = (now + timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0)
+        # Rounded up, not down: truncating could fire a fraction of a
+        # millisecond before midnight, which is still "today" by the clock.
+        delta = midnight - now
+        ms = delta.days * 86400000 + delta.seconds * 1000 + delta.microseconds // 1000
+        return ms + 1
+
+    def _schedule_daily_sync(self):
+        self.sync_timer.start(self._ms_until_next_midnight())
+
+    def _midnight_sync(self):
+        # Reschedule first, so a slow or failed pull can't push tomorrow's
+        # midnight run late or drop it.
+        self._schedule_daily_sync()
+        self.run_plaid_sync()
+
+    def run_plaid_sync(self, force=False):
+        """Ask Plaid for today's transactions, unless a pull is already running.
+
+        Safe to call any time (startup, midnight, or by hand): plaid_sync.py
+        itself is what actually enforces once-a-day, so calling this when
+        today's pull already happened is a harmless no-op.
+        """
+        if self._sync_worker is not None and self._sync_worker.isRunning():
+            return
+        self._sync_worker = PlaidSyncWorker(force=force)
+        self._sync_worker.finished_sync.connect(self._sync_finished)
+        self._sync_worker.start()
+
+    def _sync_finished(self, outcome):
+        if outcome == "synced":
+            logger.info("Daily Plaid sync completed")
+            self.advance_stat()
+        elif outcome not in SYNC_UNEXCEPTIONAL:
+            logger.warning(f"Daily Plaid sync did not complete ({outcome})")
 
     def advance_stat(self):
         """Refresh the stats from the database, then move on to the next one"""

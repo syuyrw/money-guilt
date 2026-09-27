@@ -40,7 +40,7 @@ GIT = shutil.which("git") or "git"
 
 # Files that are, or hold, data or credentials.
 FORBIDDEN_NAME = re.compile(
-    r"(^|/)(\.env|access_token\.txt|merchant_overrides\.json|telemetry\.json)$"
+    r"(^|/)(\.env|access_token\.txt|merchant_overrides\.json|telemetry\.json|plaid_sync\.json)$"
     r"|\.(db|db-journal|db-wal|db-shm|sqlite3?|csv|tsv|ofx|qfx|xlsx?|pem|key)$"
     r"|(^|/)transactions?[^/]*\.json$",
     re.IGNORECASE)
