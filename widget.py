@@ -40,8 +40,8 @@ class PlaidSyncWorker(QThread):
         self.force = force
 
     def run(self):
-        import plaid_sync
         try:
+            import plaid_sync
             outcome = plaid_sync.sync_now(force=self.force)
         except Exception:
             outcome = "failed"
