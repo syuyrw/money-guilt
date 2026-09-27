@@ -26,7 +26,7 @@ if echo "$added" | grep -qE 'PLAID_SECRET[[:space:]]*=[[:space:]]*[0-9a-fA-F]{20
 fi
 
 # Transaction data must stay in the local database only.
-"$PY" "$root/check_private_data.py" --staged || fail=1
+"$PY" "$root/security/check_private_data.py" --staged || fail=1
 
 [ "$fail" -eq 1 ] && echo "Remove it (or use --no-verify if this is intentional)." >&2
 exit $fail

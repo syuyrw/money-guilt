@@ -14,7 +14,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   else
     args=(--range "$remote_sha..$local_sha")
   fi
-  "$PY" "$root/check_private_data.py" "${args[@]}" || {
+  "$PY" "$root/security/check_private_data.py" "${args[@]}" || {
     echo "pre-push: refusing to push. Nothing was sent." >&2
     exit 1
   }

@@ -42,16 +42,16 @@ Sharing is on by default. You can turn it off at any time:
 
 - open **Settings…** from the Money Guilt icon in the menu bar and untick **Share my anonymous wasted total**, or
 - click **Turn Off Sharing** in the notice shown the first time you open the app, or
-- run `python3 telemetry.py disable` in the project folder.
+- run `python3 privacy/telemetry.py disable` in the project folder.
 
 Once off, no further reports are sent. Turning sharing off does not by itself remove a total you already sent. To have it deleted:
 
 - open **Settings…** from the menu bar icon and click **Delete My Reported Data**, or
-- run `python3 telemetry.py delete` in the project folder.
+- run `python3 privacy/telemetry.py delete` in the project folder.
 
 Either one removes your total from the server straight away, with no confirmation step, and turns sharing off so it isn't sent again. Your install ID is then discarded, so if you ever turn sharing back on it starts fresh and isn't linked to what you deleted. If the server can't be reached at that moment, Money Guilt remembers the request and retries it every 15 minutes while the app is running, and again each time it starts, until it goes through. Nothing is shared in the meantime.
 
-If you can't use the app, you can still contact the developer with your install ID (run `python3 telemetry.py status` to see it) and it will be removed.
+If you can't use the app, you can still contact the developer with your install ID (run `python3 privacy/telemetry.py status` to see it) and it will be removed.
 
 ## Feedback
 

@@ -15,10 +15,10 @@ $BIN/pip-audit || status=1
 
 echo
 echo "== private data: nothing from your real transactions in any file or commit =="
-$BIN/python check_private_data.py --tracked && $BIN/python check_private_data.py --history \
+$BIN/python security/check_private_data.py --tracked && $BIN/python security/check_private_data.py --history \
   && echo "clean" || status=1
 
-EXCLUDE='./.venv,./MoneyGuilt.app,./__pycache__,./test_*.py'
+EXCLUDE='./.venv,./MoneyGuilt.app,./__pycache__,./tests'
 
 echo
 echo "== code, all severities, for review (bandit) =="

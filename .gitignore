@@ -6,6 +6,7 @@ __pycache__/
 *.pyc
 .venv/
 MoneyGuilt*.app/
+.DS_Store
 
 # Data and credentials never belong here. Private files live in
 # ~/Library/Application Support/MoneyGuilt, and transactions only in its database.

@@ -27,7 +27,7 @@ PYTHON_APP="$("$PYTHON" -c 'import sys; print(sys.base_prefix)')/Resources/Pytho
 cat > "$CONTENTS/MacOS/MoneyGuilt" <<LAUNCHER
 #!/bin/bash
 # Already running: do nothing, so no second Dock icon appears
-pgrep -f "runpy.run_path\\('widget.py'" >/dev/null && exit 0
+pgrep -f "runpy.run_path\\('app/widget.py'" >/dev/null && exit 0
 # The log records which stats the widget can show, i.e. spending habits, so
 # keep it readable by the owner only.
 umask 077
@@ -37,7 +37,7 @@ chmod 600 "\$HOME/Library/Logs/MoneyGuilt.log"
 exec /usr/bin/open -n -a "$PYTHON_APP" \\
     --stdout "\$HOME/Library/Logs/MoneyGuilt.log" \\
     --stderr "\$HOME/Library/Logs/MoneyGuilt.log" \\
-    --args -c "import os, sys, runpy; os.chdir('$PROJECT'); sys.path.insert(0, '$PROJECT'); runpy.run_path('widget.py', run_name='__main__')"
+    --args -c "import os, sys, runpy; os.chdir('$PROJECT'); sys.path.insert(0, '$PROJECT'); runpy.run_path('app/widget.py', run_name='__main__')"
 LAUNCHER
 chmod +x "$CONTENTS/MacOS/MoneyGuilt"
 
@@ -47,7 +47,7 @@ mkdir -p "$ICONSET"
 PYTHONPATH="$PROJECT" "$PYTHON" - "$ICONSET" <<'PY'
 import sys
 from PyQt5.QtWidgets import QApplication
-from app_icon import draw_icon
+from app.app_icon import draw_icon
 
 app = QApplication([])
 out = sys.argv[1]
