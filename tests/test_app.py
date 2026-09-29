@@ -1910,7 +1910,8 @@ def t_confirmed_erase_deletes_everything_and_refreshes_the_widget():
     def body():
         seed_erasable(3)
         d = make_dialog()
-        with answer("yes"), mock.patch.object(WIDGET, 'advance_stat') as adv:
+        with answer("yes"), mock.patch.object(WIDGET, 'advance_stat') as adv, \
+             mock.patch.object(WIDGET, 'run_plaid_sync'):
             d.erase_button.click()
         eq(rows_left(), 0)
         eq(adv.call_count, 1, "the widget must stop showing what was erased")
@@ -1924,7 +1925,8 @@ def t_erase_wording_is_singular_when_it_should_be():
     def body():
         seed_erasable(1)
         d = make_dialog()
-        with answer("yes"), mock.patch.object(WIDGET, 'advance_stat'):
+        with answer("yes"), mock.patch.object(WIDGET, 'advance_stat'), \
+             mock.patch.object(WIDGET, 'run_plaid_sync'):
             d.erase_button.click()
         assert 'Deleted 1 transaction and 1 account,' in d.erase_result.text(), d.erase_result.text()
     with_temp_db(body)
@@ -1939,13 +1941,45 @@ def t_erase_leaves_the_bank_link_and_sharing_alone():
             fresh_bank(token="tok")
             telemetry.set_enabled(True)
             d = make_dialog()
-            with answer("yes"), mock.patch.object(WIDGET, 'advance_stat'):
+            with answer("yes"), mock.patch.object(WIDGET, 'advance_stat'), \
+                 mock.patch.object(WIDGET, 'run_plaid_sync'):
                 d.erase_button.click()
             eq(BANK_STORE.token, "tok", "erasing data must not disconnect the bank")
             eq(BANK_PLAID.removed, [])
             eq(telemetry.is_enabled(), True, "nor change sharing")
         with_temp_db(body)
     with_telemetry(inner)
+
+
+def t_erase_triggers_an_immediate_resync_so_a_linked_bank_does_not_sit_empty():
+    """Regression: erasing doesn't touch the once-a-day sync record, so
+    without this a linked bank would otherwise stay empty until midnight."""
+    from unittest import mock
+    def body():
+        seed_erasable(2)
+        fresh_sync()
+        fresh_bank(token="tok")
+        d = make_dialog()
+        with answer("yes"), mock.patch.object(WIDGET, 'run_plaid_sync') as sync:
+            d.erase_button.click()
+        sync.assert_called_once_with(force=True)
+    with_temp_db(body)
+
+
+def t_erase_then_resync_actually_repopulates_the_same_day():
+    from unittest import mock
+    def body():
+        seed_erasable(2)
+        fresh_sync()
+        fresh_bank(token="tok")
+        d = make_dialog()
+        with answer("yes"):
+            d.erase_button.click()
+        loop, got = wait_for_signal(WIDGET._sync_worker.finished_sync)
+        loop.exec_()
+        eq(got, ["synced"])
+        eq(rows_left(), 1, "the fake account's one transaction is back")
+    with_temp_db(body)
 
 
 def t_the_confirmations_say_what_they_do_and_do_not_do():
@@ -2198,6 +2232,8 @@ WIDGET_TESTS = [
     ("erase: confirming deletes everything and refreshes the widget", t_confirmed_erase_deletes_everything_and_refreshes_the_widget),
     ("erase: wording is singular when it should be", t_erase_wording_is_singular_when_it_should_be),
     ("erase: leaves the bank link and sharing alone", t_erase_leaves_the_bank_link_and_sharing_alone),
+    ("erase: triggers an immediate resync for a linked bank", t_erase_triggers_an_immediate_resync_so_a_linked_bank_does_not_sit_empty),
+    ("erase: resync actually repopulates the same day", t_erase_then_resync_actually_repopulates_the_same_day),
     ("bank: the confirmations say what they do and do not do", t_the_confirmations_say_what_they_do_and_do_not_do),
     ("plaid sync: does nothing without a linked bank", t_run_plaid_sync_does_nothing_without_a_linked_bank),
     ("plaid sync: a successful sync saves data and refreshes the widget", t_a_successful_sync_saves_data_and_refreshes_the_widget),

@@ -427,6 +427,10 @@ class SettingsDialog(QDialog):
             "taught the app.")
         self.erase_result.show()
         self.app_widget.advance_stat()      # the widget must stop showing what's gone
+        # Without this, a linked bank would otherwise sit empty until the next
+        # calendar day: erasing doesn't touch the once-a-day sync record, so
+        # the ordinary throttle would block a same-day refill.
+        self.app_widget.run_plaid_sync(force=True)
 
     def show_data_folder(self):
         QDesktopServices.openUrl(QUrl.fromLocalFile(paths.data_dir()))
