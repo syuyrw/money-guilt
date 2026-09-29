@@ -9,6 +9,7 @@ import json
 import os
 import sys
 import unittest
+from datetime import datetime, timedelta
 from unittest import mock
 
 os.environ.setdefault("PLAID_CLIENT_ID", "test-client-id")
@@ -143,6 +144,60 @@ class RemoveItem(unittest.TestCase):
         self.assertEqual(plaid_client.error_code(api_error("ITEM_NOT_FOUND")), "ITEM_NOT_FOUND")
         for bad in (api_error(body="x"), api_error(body=None), ValueError("no body")):
             self.assertIsNone(plaid_client.error_code(bad))
+
+
+def page(transactions, total):
+    from types import SimpleNamespace
+    return SimpleNamespace(transactions=list(transactions), total_transactions=total)
+
+
+class GetTransactions(unittest.TestCase):
+    def setUp(self):
+        self.client = make_client("sandbox")
+        self.calls = []
+
+    def stub(self, pages):
+        """pages: a list of responses, one per call to transactions_get."""
+        remaining = list(pages)
+
+        def transactions_get(request):
+            self.calls.append(request.offset if hasattr(request, "offset") else 0)
+            return remaining.pop(0)
+        self.client.client = mock.Mock(transactions_get=transactions_get)
+
+    def test_a_single_page_needs_no_further_calls(self):
+        self.stub([page(["a", "b"], total=2)])
+        result = self.client.get_transactions("t")
+        self.assertEqual(result, ["a", "b"])
+        self.assertEqual(len(self.calls), 1)
+
+    def test_pagination_collects_every_page(self):
+        self.stub([page(["a", "b"], total=5),
+                   page(["c", "d"], total=5),
+                   page(["e"], total=5)])
+        result = self.client.get_transactions("t")
+        self.assertEqual(result, ["a", "b", "c", "d", "e"])
+        self.assertEqual(len(self.calls), 3)
+
+    def test_a_page_that_adds_nothing_stops_instead_of_looping_forever(self):
+        """Regression: Plaid reporting more than a page actually returns used
+        to spin on the same offset forever, hanging the daily sync for good."""
+        self.stub([page(["a"], total=99), page([], total=99), page(["x"], total=99)])
+        with self.assertLogs("banking.plaid_client", level="WARNING"):
+            result = self.client.get_transactions("t")
+        self.assertEqual(result, ["a"], "stops with whatever it actually got")
+        self.assertEqual(len(self.calls), 2, "must not keep calling after a stalled page")
+
+    def test_default_date_range_is_the_last_30_days(self):
+        seen = []
+
+        def transactions_get(request):
+            seen.append(request)
+            return page([], total=0)
+        self.client.client = mock.Mock(transactions_get=transactions_get)
+        self.client.get_transactions("t")
+        self.assertEqual(seen[0].end_date, datetime.now().date())
+        self.assertEqual(seen[0].start_date, datetime.now().date() - timedelta(days=30))
 
 
 if __name__ == "__main__":

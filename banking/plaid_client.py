@@ -151,17 +151,26 @@ class PlaidClient:
             response = self.client.transactions_get(request)
             transactions = response.transactions
 
-            # Handle pagination
+            # Handle pagination. A page that adds nothing would otherwise spin
+            # forever on the same offset (this now runs unattended, once a
+            # day, so a hang here would silently stop every sync after it).
             total_transactions = response.total_transactions
             while len(transactions) < total_transactions:
+                before = len(transactions)
                 request = TransactionsGetRequest(
                     access_token=access_token,
                     start_date=start_date,
                     end_date=end_date,
-                    offset=len(transactions),
+                    offset=before,
                 )
                 response = self.client.transactions_get(request)
                 transactions.extend(response.transactions)
+                if len(transactions) == before:
+                    logger.warning(
+                        "Plaid reported %d transactions but a page at offset "
+                        "%d returned none; stopping with what was retrieved.",
+                        total_transactions, before)
+                    break
 
             logger.info(f"Retrieved {len(transactions)} transactions from {start_date} to {end_date}")
             return transactions
