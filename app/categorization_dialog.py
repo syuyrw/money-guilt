@@ -1,4 +1,10 @@
-"""Manual transaction categorization dialog"""
+"""Manual transaction categorization dialog
+
+A QDialog (PyQt5's base class for pop-up windows) that shows one
+transaction at a time and asks "what category is this, and is it
+wasteful spending?" - the answers both update that one row in the
+database and teach the categorizer about the merchant for next time.
+"""
 
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QPushButton, QComboBox, QCheckBox, QMessageBox,
@@ -12,6 +18,10 @@ from data.categorizer import get_categorizer, CATEGORY_KEYWORDS
 
 logger = logging.getLogger(__name__)
 
+# A Qt stylesheet - CSS-like rules for how widgets look. "#title",
+# "#muted" etc. match widgets whose setObjectName() was set to that name
+# further down (e.g. title.setObjectName("title")), the same way a CSS
+# "#id" selector targets one specific HTML element.
 STYLE = """
 QDialog { background-color: #1e1e20; }
 QLabel { background: transparent; color: #f2f2f7; font-size: 13px; }
@@ -47,14 +57,17 @@ class CategorizationDialog(QDialog):
     """Dialog for categorizing real transactions from the database"""
 
     def __init__(self, parent=None, limit=100):
+        # super().__init__(parent) runs QDialog's own setup first (this is
+        # how every PyQt5 widget subclass starts), with `parent` being the
+        # window this dialog belongs to (or None for a standalone window).
         super().__init__(parent)
         self.limit = limit
         self.setWindowTitle("Categorize Transactions")
         self.setGeometry(100, 100, 700, 400)
         self.categorizer = get_categorizer()
 
-        self.transactions = []
-        self.current_index = 0
+        self.transactions = []       # the batch of rows being asked about
+        self.current_index = 0       # which one is on screen right now
         self.categorized_count = 0
 
         self.init_ui()
@@ -66,6 +79,9 @@ class CategorizationDialog(QDialog):
         self.setStyleSheet(STYLE)
         self.setFixedSize(460, 420)
 
+        # QVBoxLayout stacks widgets top-to-bottom; passing `self` makes
+        # this the dialog's main layout, so anything added to `root` below
+        # actually appears in the window.
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 22, 24, 20)
         root.setSpacing(0)
@@ -132,6 +148,11 @@ class CategorizationDialog(QDialog):
         buttons.setSpacing(10)
 
         self.skip_button = QPushButton("Skip")
+        # `.clicked` is a Qt *signal* every QPushButton has - it "fires"
+        # whenever the button is clicked. `.connect(self.skip_transaction)`
+        # wires that signal to this method, so clicking Skip calls
+        # self.skip_transaction() with no arguments. This is Qt's
+        # signal/slot pattern, used throughout this app's UI.
         self.skip_button.clicked.connect(self.skip_transaction)
         buttons.addWidget(self.skip_button)
 
@@ -156,6 +177,10 @@ class CategorizationDialog(QDialog):
         wasteful = self.categorizer.merchant_wasteful
         try:
             with get_db() as conn:
+                # For every merchant the categorizer already has a learned
+                # answer for, auto-fill in every matching transaction that
+                # hasn't been reviewed by hand yet - this is what keeps a
+                # merchant from being asked about more than once.
                 for merchant, category in overrides.items():
                     conn.execute("""
                         UPDATE transactions
@@ -164,6 +189,9 @@ class CategorizationDialog(QDialog):
                     """, (category, bool(wasteful.get(merchant, False)), merchant))
                 conn.commit()
         except Exception:
+            # A failure here shouldn't crash the whole categorize flow -
+            # it just means this pass didn't auto-fill anything, and the
+            # user may see one of these transactions asked about anyway.
             logger.exception("Could not apply learned merchant categories")
 
     def load_transactions(self):
@@ -201,6 +229,9 @@ class CategorizationDialog(QDialog):
 
         trans = self.transactions[self.current_index]
         self.mark_prompted(trans[0])
+        # `trans` is one sqlite3.Row from the SELECT in load_transactions()
+        # (id, name, amount, date, in that column order) - accessed here
+        # by position rather than by name.
         trans_id = trans[0]
         merchant = trans[1]
         amount = trans[2]
@@ -281,6 +312,9 @@ class CategorizationDialog(QDialog):
 
         self.categorized_count += 1
         self.apply_learned_categories()
+        # Reporting the new wasted total happens on a background thread
+        # (see telemetry.py), so clicking this button never has to wait on
+        # a network call before moving to the next transaction.
         telemetry.report_in_background()
         self.drop_learned_from_queue()
 
@@ -291,8 +325,15 @@ class CategorizationDialog(QDialog):
     def drop_learned_from_queue(self):
         """Remove queued transactions from merchants that were just categorized"""
         learned = self.categorizer.merchant_overrides
+        # Keeps only the not-yet-seen transactions (everything after the
+        # current one) whose merchant ISN'T already answered for - the
+        # ones that are get silently skipped, since apply_learned_categories()
+        # already applied the answer to them in the database directly.
         upcoming = [t for t in self.transactions[self.current_index + 1:]
                     if t[1].lower() not in learned]
+        # Rebuilds the list as "everything already shown, up through the
+        # current one" plus the filtered remainder - this is what keeps
+        # self.current_index still pointing at the right spot afterward.
         self.transactions = self.transactions[:self.current_index + 1] + upcoming
 
     def skip_transaction(self):

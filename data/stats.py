@@ -1,3 +1,13 @@
+"""Builds the list of "stat" dicts the widget rotates through.
+
+Each stat is a plain dict with a few standard keys the widget knows how to
+display: 'type' (a unique name), 'title', 'value' (the big number/text),
+an optional 'subtitle' and 'value_extra', 'wasted_text' (the exact text
+that should render in red - see WASTED_COLOR in app/widget.py), and
+'data' (the raw numbers behind it, mostly used by tests). A stat is only
+added to the list at all if there's enough real data to make it honest;
+empty/zero results are skipped rather than shown as "$0.00".
+"""
 from data.database import (
     get_all_transactions, get_transactions_by_category,
     get_wasteful_spending, get_total_spending, get_accounts
@@ -147,15 +157,25 @@ def get_food_and_drink_projection(days=30):
 def get_delivery_markup(days=30):
     """Delivery-app spending and the estimated markup paid on it"""
     from data.database import get_db
+    # Builds a SQL snippet like:
+    #   LOWER(name) LIKE ? OR LOWER(name) LIKE ? OR LOWER(name) LIKE ?
+    # with one "LIKE ?" per vendor name - the actual vendor names are only
+    # filled in below, as parameters, never pasted into this string.
     clause = " OR ".join("LOWER(name) LIKE ?" for _ in DELIVERY_VENDORS)
     with get_db() as conn:
         cursor = conn.cursor()
+        # The f-string here only inserts `clause` (the "?" placeholders
+        # built above), not any actual value - the real vendor names are
+        # passed separately as parameters, so this is still safe from SQL
+        # injection despite looking superficially similar to unsafe code.
         cursor.execute(f"""
             SELECT SUM(amount) as total
             FROM transactions
             WHERE amount > 0 AND ({clause})
             AND date >= date('now', '-' || ? || ' days')
         """, [f"%{v}%" for v in DELIVERY_VENDORS] + [days])
+        # SQL's LIKE wildcard "%" means "anything here" - "%doordash%"
+        # matches any name containing "doordash" anywhere in it.
         total = cursor.fetchone()['total'] or 0
     return {'spent': total, 'markup': total * DELIVERY_MARKUP}
 

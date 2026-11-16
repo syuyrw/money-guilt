@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import (QDialog, QHBoxLayout, QLabel, QLineEdit,
                              QPushButton, QTextEdit, QVBoxLayout)
 
 from privacy import feedback
-from app.categorization_dialog import STYLE
+from app.categorization_dialog import STYLE  # reuses that dialog's base look
 
 EXTRA_STYLE = """
 QTextEdit, QLineEdit { background-color: #2a2a2d; border: 1px solid #3a3a3e;
@@ -16,10 +16,18 @@ QLabel#error { color: #ff6b5a; font-size: 12px; }
 
 
 class FeedbackDialog(QDialog):
+    # A custom Qt signal this class defines itself (as opposed to a
+    # built-in one like QPushButton's `.clicked`). It carries two pieces
+    # of data when it fires: whether sending succeeded, and an error
+    # message if not. See submit()/_on_sent() below for how it's used to
+    # get a result back from a background thread safely.
     sent = pyqtSignal(bool, str)
 
     def __init__(self, parent=None, send=feedback.send):
         super().__init__(parent)
+        # `send` defaults to the real feedback.send function, but accepting
+        # it as a parameter lets tests substitute a fake one instead,
+        # without this dialog ever making a real network call during a test.
         self._send = send
         self.setWindowTitle("Send Feedback")
         self.setStyleSheet(STYLE + EXTRA_STYLE)
@@ -84,15 +92,25 @@ class FeedbackDialog(QDialog):
         self.send_button.setEnabled(False)
         self.send_button.setText("Sending…")
 
+        # The actual network call happens on a separate thread, so the
+        # window stays responsive (the user can still move/close it)
+        # instead of freezing until the request finishes. PyQt5 widgets
+        # must only ever be touched from the main thread, though - so
+        # `work()` doesn't update any UI directly. Instead it emits the
+        # `sent` signal, which Qt safely delivers back onto the main
+        # thread to run _on_sent() there.
         def work():
             ok, err = self._send(message, reply_to)
             self.sent.emit(ok, err or "")
 
+        # daemon=True means this thread won't stop the whole app from
+        # quitting if it's still running when the app closes.
         threading.Thread(target=work, daemon=True).start()
 
     def _on_sent(self, ok, error):
+        """Runs back on the main thread once work() above finishes."""
         if ok:
-            self.accept()
+            self.accept()  # closes the dialog with a "success" result
             return
         self.send_button.setEnabled(True)
         self.send_button.setText("Send")

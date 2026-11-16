@@ -34,12 +34,17 @@ from flask import Flask, jsonify, request
 DB_PATH = os.getenv("COLLECTOR_DB", "collector.db")
 ADMIN_KEY = os.getenv("COLLECTOR_ADMIN_KEY", "")
 MAX_TOTAL = 1_000_000_000
+# A UUID looks like "123e4567-e89b-12d3-a456-426614174000" - this matches
+# that exact shape (32 hex digits, grouped by hyphens) and nothing else.
 INSTALL_ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 FEEDBACK_TO = os.getenv("FEEDBACK_TO", "jordan@moneyguilt.com")
 MAX_MESSAGE = 2000
 FEEDBACK_PER_HOUR = 5  # per address, so the form can't be used to flood the inbox
 EMAIL_RE = re.compile(r"^[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+$")
+# A dict that creates an empty deque (double-ended queue) automatically
+# the first time any given key is looked up - tracks, per sender IP, the
+# timestamps of their recent feedback submissions (see feedback() below).
 _recent = defaultdict(deque)
 
 app = Flask(__name__)
@@ -47,6 +52,9 @@ app.config["MAX_CONTENT_LENGTH"] = 16 * 1024  # reports are tiny; feedback is at
 
 
 def _db():
+    """Opens the SQLite file and makes sure both tables exist - called at
+    the start of every request that needs the database, since this is a
+    stateless Flask app with no separate startup step."""
     conn = sqlite3.connect(DB_PATH)
     conn.execute("""CREATE TABLE IF NOT EXISTS installs (
         install_id TEXT PRIMARY KEY, total_wasted REAL NOT NULL,
@@ -60,6 +68,10 @@ def _db():
 @app.before_request
 def limit_small_routes():
     # Reports and deletions are a few dozen bytes; only feedback may be larger.
+    # This rejects an oversized request before Flask even reads its body,
+    # which matters since app.config["MAX_CONTENT_LENGTH"] above already
+    # caps everything at 16KB - this is a tighter limit for the routes
+    # that should never legitimately need that much.
     if request.path != "/feedback" and (request.content_length or 0) > 1024:
         return jsonify(error="Too large"), 413
 
@@ -76,10 +88,18 @@ def report():
     install_id, total = data.get("install_id"), data.get("total_wasted")
     if not (isinstance(install_id, str) and INSTALL_ID_RE.match(install_id)):
         return jsonify(error="Bad install_id"), 400
+    # `isinstance(total, bool)` is checked separately because in Python,
+    # bool is actually a subclass of int - True/False would otherwise pass
+    # an `isinstance(total, (int, float))` check despite not being a real
+    # number here.
     if isinstance(total, bool) or not isinstance(total, (int, float)) \
             or not 0 <= total <= MAX_TOTAL:
         return jsonify(error="Bad total_wasted"), 400
 
+    # Same upsert pattern as database.py's save_accounts: create a new row
+    # for an install_id never seen before, or overwrite its existing row
+    # if it's reported before - either way, one row per install, always
+    # holding its latest total.
     with _db() as conn:
         conn.execute("""INSERT INTO installs VALUES (?, ?, ?, ?)
             ON CONFLICT(install_id) DO UPDATE SET total_wasted = excluded.total_wasted,
@@ -122,6 +142,10 @@ def send_email(message, reply_to):
         mail["Reply-To"] = reply_to  # validated: no whitespace, so no header injection
     mail.set_content(message + ("\n\n-- \nReply to: " + reply_to if reply_to else ""))
     try:
+        # starttls() upgrades the connection to an encrypted one before
+        # the login credentials or message content are sent - the initial
+        # connection to the mail server is unencrypted, but nothing
+        # sensitive goes over it before this call.
         with smtplib.SMTP(host, int(os.getenv("SMTP_PORT", "587")), timeout=15) as smtp:
             smtp.starttls(context=ssl.create_default_context())
             smtp.login(user, password)
@@ -146,6 +170,12 @@ def feedback():
             len(reply_to) > 254 or not EMAIL_RE.match(reply_to))):
         return jsonify(error="Bad reply_to"), 400
 
+    # Rate limiting: for this sender's IP address, drop any timestamps
+    # older than an hour off the front of the queue (deques are efficient
+    # to pop from either end), then refuse if 5 or more submissions are
+    # still within that hour-long window. This is a simple in-memory
+    # limiter - it resets if the server restarts, which is an acceptable
+    # trade-off for something this low-stakes.
     now = time.time()
     recent = _recent[request.remote_addr]
     while recent and now - recent[0] > 3600:
@@ -167,6 +197,13 @@ def feedback():
 @app.route("/total")
 def total():
     supplied = request.headers.get("X-Admin-Key", "")
+    # hmac.compare_digest() checks two strings for equality in constant
+    # time - always taking the same amount of time regardless of where
+    # the first mismatched character is. A plain `supplied == ADMIN_KEY`
+    # would return slightly faster the sooner it finds a difference,
+    # which (in theory) an attacker could use to guess the key one
+    # character at a time by measuring response times. compare_digest()
+    # closes that door.
     if not ADMIN_KEY or not hmac.compare_digest(supplied, ADMIN_KEY):
         return jsonify(error="Forbidden"), 403
     with _db() as conn:
@@ -179,5 +216,8 @@ def total():
 if __name__ == "__main__":
     if not ADMIN_KEY:
         raise SystemExit("Set COLLECTOR_ADMIN_KEY first")
+    # Any file this process creates from here on (notably the SQLite
+    # database) is created without group/other permissions, regardless of
+    # the system's default umask.
     os.umask(0o077)
     app.run(host="127.0.0.1", port=int(os.getenv("PORT", "5002")))

@@ -19,11 +19,18 @@ SUBJECT = "Money Guilt feedback"
 BODY = ("What's on your mind? (Bug, idea, or anything else.)\n\n\n\n"
         "-- Please don't include account numbers or other private details. --")
 MAX_MESSAGE = 2000
+# A deliberately loose pattern: just "something@something.something" with
+# no spaces, @, or angle brackets - good enough to catch obvious typos
+# without rejecting a real but unusual-looking address.
 EMAIL_RE = re.compile(r"^[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+$")
 
 
 def feedback_url():
     """mailto: link, used when no collector is configured"""
+    # quote() percent-encodes the subject/body text so it's safe to embed
+    # in a URL (spaces, newlines and punctuation all need escaping there).
+    # Clicking this link opens the user's own default mail app with a new
+    # message already addressed and filled in.
     return f"mailto:{FEEDBACK_EMAIL}?subject={quote(SUBJECT)}&body={quote(BODY)}"
 
 
@@ -66,5 +73,7 @@ def send(message, reply_to="", post=_post):
         if post(url, payload):
             return True, None
     except (OSError, ValueError, urllib.error.URLError):
+        # Any network problem - fall through to the generic error message
+        # below rather than showing the user a raw exception.
         pass
     return False, "Couldn't send it. Check your connection and try again."

@@ -1,5 +1,12 @@
 /* Money Guilt Widget Styles - macOS Tahoe Liquid Glass
    Per official Apple Tahoe design guide (sections 1-7)
+
+   This is a Qt Style Sheet (QSS) - a CSS-like language for styling Qt
+   widgets, loaded by widget.py's load_stylesheet(). "QWidget" and "QLabel"
+   below are selectors matching every widget of that Qt class, the same
+   way a CSS tag selector (e.g. "p { ... }") matches every <p>. "#title_label"
+   etc. are ID selectors, matching one specific widget whose Python code
+   called setObjectName("title_label") - see app/widget.py's init_ui().
 */
 
 QWidget {

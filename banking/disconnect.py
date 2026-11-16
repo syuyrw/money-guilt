@@ -22,7 +22,10 @@ from banking import secure_store
 logger = logging.getLogger(__name__)
 
 # Fixed statements rather than a table name filled into one, so nothing here is
-# ever built from a variable.
+# ever built from a variable. (Building SQL by inserting a variable into the
+# string - even a table name - is exactly the kind of thing that leads to
+# SQL-injection bugs; writing out each statement in full avoids the
+# temptation entirely.)
 ERASE_STATEMENTS = (
     ("transactions", "DELETE FROM transactions"),
     ("accounts", "DELETE FROM accounts"),
@@ -31,6 +34,9 @@ ERASE_STATEMENTS = (
 
 
 def _make_client():
+    # Imported here, not at the top of the file, mainly so tests can swap
+    # in a fake PlaidClient by replacing this function, without ever
+    # constructing (or needing credentials for) a real one.
     from banking import plaid_client
     return plaid_client.PlaidClient()
 
@@ -65,15 +71,23 @@ def disconnect_bank(client=None, store=None):
         try:
             client = _make_client()
         except ValueError:
+            # Raised by PlaidClient's constructor when credentials are
+            # missing or malformed - there's nothing to even attempt here.
             return "unconfigured"
 
     try:
         client.remove_item(token)
     except Exception as exc:
         # The type only: a Plaid error can quote the request, token included.
+        # Logging type(exc).__name__ (e.g. "ApiException") instead of the
+        # exception itself means the token can never accidentally end up in
+        # a log file.
         logger.warning("Could not disconnect the bank (%s)", type(exc).__name__)
         return "failed"
 
+    # Only delete the local copy once Plaid has actually confirmed the
+    # connection is revoked - see the module docstring above for why this
+    # order matters.
     store.delete_access_token()
     logger.info("Bank disconnected and token removed")
     return "disconnected"
@@ -88,17 +102,31 @@ def erase_local_data(get_categorizer=None):
     """
     counts = {"transactions": 0, "accounts": 0}
     with database.get_db() as conn:
+        # Normally, SQLite's DELETE just marks a row's space as "free to
+        # reuse later" - the actual bytes can still be read straight out of
+        # the .db file until something else overwrites them. secure_delete
+        # makes SQLite overwrite deleted data with zeros immediately instead.
         conn.execute("PRAGMA secure_delete = ON")
         for table, statement in ERASE_STATEMENTS:
             try:
+                # cursor.rowcount (returned directly from execute() here) is
+                # how many rows a DELETE/UPDATE actually affected.
                 removed = conn.execute(statement).rowcount
             except sqlite3.OperationalError:     # table not created yet: nothing to erase
                 continue
             if table in counts:
                 counts[table] = max(removed, 0)
         conn.commit()
+        # VACUUM rebuilds the database file from scratch, which both
+        # shrinks it back down and ensures no fragment of the deleted rows'
+        # old pages lingers anywhere in the file.
         conn.execute("VACUUM")
 
+    # (get_categorizer or categorizer.get_categorizer)() means: use the
+    # function passed in if there is one (tests do this to use a throwaway
+    # categorizer), otherwise fall back to the app's real one. Either way,
+    # it's then called to get the actual object, and .forget_all() wipes
+    # everything it has learned about merchants.
     (get_categorizer or categorizer.get_categorizer)().forget_all()
     logger.info("Local data erased")
     return counts

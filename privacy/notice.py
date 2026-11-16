@@ -28,10 +28,16 @@ _NUMBER = re.compile(r"[$€£]?\d[\d,]*(?:\.\d+)?%?")
 
 
 def mask_numbers(text):
+    # re.sub replaces every match of the pattern with MASK - text or ""
+    # guards against `text` being None, which .sub() can't handle directly.
     return _NUMBER.sub(MASK, text or "")
 
 
 # ---------------------------------------------------------------- idle time
+# macOS's `ioreg` command prints a tree of hardware info as text; somewhere
+# in it is a line like `"HIDIdleTime" = 1234567890` - this regex pulls out
+# just that number. HIDIdleTime is reported in nanoseconds, hence /1e9
+# below to convert it to seconds (1e9 = 1,000,000,000).
 _IDLE = re.compile(r'"HIDIdleTime"\s*=\s*(\d+)')
 
 
@@ -42,7 +48,12 @@ def parse_idle(output):
 
 
 def idle_seconds(run=subprocess.run):
-    """Seconds since the last input, or None when it can't be read."""
+    """Seconds since the last input, or None when it can't be read.
+
+    `run` defaults to the real subprocess.run, but accepting it as a
+    parameter means tests can pass in a fake instead, without this
+    function ever actually launching a process during a test run.
+    """
     try:
         result = run([IOREG, "-c", "IOHIDSystem"], capture_output=True,
                      text=True, timeout=5)
@@ -108,23 +119,47 @@ def set_capture_excluded(view_id, excluded):
     view_id must be a real NSView pointer, i.e. QWidget.winId() on the cocoa
     platform. Anything else can crash the process, so callers check the
     platform first. Returns True if the setting was applied.
+
+    PyQt5 has no built-in way to call this particular macOS feature, so this
+    talks to Objective-C directly through ctypes (Python's foreign-function
+    library for calling into C libraries) - effectively hand-rolling the
+    two Objective-C method calls `view.window` and
+    `window.setSharingType:` that Swift/Objective-C code would just write
+    directly.
     """
     if sys.platform != "darwin" or not view_id:
         return False
     try:
+        # Load Objective-C's runtime library and look up the two functions
+        # (objc_msgSend, sel_registerName) every Objective-C message send
+        # goes through under the hood.
         objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
         objc.sel_registerName.restype = ctypes.c_void_p
         objc.sel_registerName.argtypes = [ctypes.c_char_p]
+        # objc_msgSend is how every Objective-C method call actually
+        # happens, but its real signature varies by call, so it has to be
+        # re-cast (via CFUNCTYPE) for each different argument/return shape
+        # used below: `send` for a call with no extra arguments (reading
+        # `.window`), `send_ulong` for one taking an extra integer
+        # argument (the sharing-type call).
         address = ctypes.cast(objc.objc_msgSend, ctypes.c_void_p).value
         send = ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p,
                                 ctypes.c_void_p)(address)
         send_ulong = ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p,
                                       ctypes.c_void_p, ctypes.c_ulong)(address)
+        # sel_registerName(b"window") looks up Objective-C's internal id
+        # for the "window" method/property; `send` then calls it on the
+        # NSView to get its containing NSWindow.
         window = send(int(view_id), objc.sel_registerName(b"window"))
         if not window:
             return False
+        # Calls [window setSharingType: NSWindowSharingNone] (or
+        # ...ReadOnly to undo it) - this is the actual macOS API that
+        # tells the system "leave this window out of screen captures".
         send_ulong(window, objc.sel_registerName(b"setSharingType:"),
                    _SHARING_NONE if excluded else _SHARING_READ_ONLY)
         return True
     except (OSError, AttributeError, ValueError):
+        # Anything going wrong talking to a system library this directly
+        # is treated as "couldn't apply it" rather than crashing the app.
         return False

@@ -37,7 +37,12 @@ SYNC_UNEXCEPTIONAL = {"already_synced_today", "not_linked"}
 
 
 class PlaidSyncWorker(QThread):
-    """Pulls the day's transactions off the interface thread."""
+    """Pulls the day's transactions off the interface thread.
+
+    Like the worker classes in settings_dialog.py: the real work happens in
+    run() on a background thread, and the result comes back to the main
+    thread through the finished_sync signal rather than a return value.
+    """
     finished_sync = pyqtSignal(str)
 
     def __init__(self, force=False):
@@ -46,6 +51,10 @@ class PlaidSyncWorker(QThread):
 
     def run(self):
         try:
+            # Imported here rather than at the top of the file so a broken
+            # or missing dependency inside plaid_sync can't crash the
+            # whole app at startup - it's caught below and reported as a
+            # plain "failed" outcome instead.
             from banking import plaid_sync
             outcome = plaid_sync.sync_now(force=self.force)
         except Exception:
@@ -54,18 +63,28 @@ class PlaidSyncWorker(QThread):
 
 
 class _DimOverlay(QWidget):
-    """Translucent dark veil over the widget; ignores the mouse."""
+    """Translucent dark veil over the widget; ignores the mouse.
+
+    Shown on top of the widget while a modal dialog (like Settings) is
+    open, so the widget visibly dims rather than just sitting there
+    looking clickable underneath the dialog.
+    """
 
     def __init__(self, parent):
         super().__init__(parent)
+        # WA_TransparentForMouseEvents means clicks pass straight through
+        # this overlay to whatever's underneath, as if it weren't there -
+        # it's purely visual, never meant to intercept input itself.
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.hide()
 
     def paintEvent(self, event):
+        # Qt calls paintEvent() automatically whenever this widget needs
+        # to redraw itself; drawing code never gets called directly.
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(0, 0, 0, 150))
+        painter.setBrush(QColor(0, 0, 0, 150))  # black, partially see-through (150 of 255)
         painter.drawRoundedRect(QRectF(self.rect()), 24, 24)
 
 
@@ -76,8 +95,15 @@ class MoneyGuiltWidget(QWidget):
 
     def __init__(self, settings=None):
         super().__init__()
+        # QSettings is Qt's built-in key/value store for app preferences -
+        # on macOS it's backed by the standard .plist preferences system,
+        # so these survive between launches without this app needing to
+        # manage its own settings file.
+        #
         # Injectable so tests never touch the user's real saved position.
         self.settings = settings or QSettings("MoneyGuilt", "MoneyGuiltWidget")
+        # .value(key, default, type=...) reads a saved setting, or returns
+        # the given default if it was never set before (e.g. first launch).
         self.privacy = privacy.PrivacyState(
             manual=self.settings.value("privacy/manual", False, type=bool),
             # Off by default: the widget exists to keep the number in front of
@@ -112,6 +138,13 @@ class MoneyGuiltWidget(QWidget):
     def init_ui(self):
         """Initialize the UI"""
         self.setWindowTitle("Money Guilt")
+        # Window flags control how the OS treats this window. `|` combines
+        # several flags together (it's a bitwise OR - each flag is really
+        # just one bit, and combining them with | turns on all of them at
+        # once): always on top of other windows, no title bar/border
+        # (FramelessWindowHint - this is why the widget looks like a
+        # floating card rather than a normal app window), and no drop
+        # shadow.
         self.setWindowFlags(
             Qt.Window |
             Qt.WindowStaysOnTopHint |
@@ -167,7 +200,13 @@ class MoneyGuiltWidget(QWidget):
         self.title_label.setAlignment(Qt.AlignHCenter | Qt.AlignBottom)
         main_layout.addWidget(self.title_label, 0)
 
-        # Interior: equal stretches on either side of the value
+        # Interior: equal stretches on either side of the value.
+        # addStretch(1) inserts an invisible, flexible spacer rather than
+        # a widget - it expands to fill whatever extra room is available.
+        # Putting one before the value and one after, both with the same
+        # "weight" (1), is what keeps the value centered vertically no
+        # matter how tall this layout ends up: both spacers always grow
+        # or shrink by the same amount.
         interior = QVBoxLayout()
         interior.setContentsMargins(0, 0, 0, 0)
         interior.setSpacing(0)
@@ -181,6 +220,10 @@ class MoneyGuiltWidget(QWidget):
         interior.addWidget(self.value_label, 0)
 
         interior.addStretch(1)
+        # The trailing `1` here is this layout's own stretch factor within
+        # main_layout - it's the one section allowed to grow/shrink when
+        # the window is resized, while the title and bottom band (added
+        # with stretch 0 below) stay a fixed, content-sized height.
         main_layout.addLayout(interior, 1)
 
         # Bottom band: subtitle, chart, then the footer pinned to the bottom
@@ -317,10 +360,12 @@ class MoneyGuiltWidget(QWidget):
                      cy - diameter / 2 + stroke / 2,
                      diameter - stroke, diameter - stroke)
 
+        # Qt measures drawArc()'s angles in sixteenths of a degree (an old
+        # Qt convention), so a full circle is 360 * 16, not 360.
         pen = QPen(QColor(255, 255, 255, 38), stroke, Qt.SolidLine, Qt.FlatCap)
         painter.setPen(pen)
         painter.setBrush(Qt.NoBrush)
-        painter.drawArc(box, 0, 360 * 16)
+        painter.drawArc(box, 0, 360 * 16)  # the pale full-circle track behind the colored arc
 
         pct = max(0.0, min(100.0, self.ring_percentage))
         if pct > 0:
@@ -332,17 +377,28 @@ class MoneyGuiltWidget(QWidget):
 
     def setup_tray_icon(self):
         """Setup system tray icon for macOS menu bar"""
-        # Create tray icon
+        # QSystemTrayIcon is what actually puts an icon in the macOS menu
+        # bar (despite the Windows-sounding "tray" name - this is Qt's one
+        # cross-platform class for both).
         self.tray_icon = QSystemTrayIcon(self)
 
-        # Create tray menu
+        # QMenu is the dropdown that appears when you click the menu bar
+        # icon; each addAction() call below adds one row to it.
         tray_menu = QMenu()
 
         # Show/Hide action
         self.toggle_action = tray_menu.addAction("Hide Widget")
+        # `.triggered` is the signal a menu action fires when clicked;
+        # connecting it to toggle_widget means clicking this row calls
+        # self.toggle_widget().
         self.toggle_action.triggered.connect(self.toggle_widget)
 
         next_action = tray_menu.addAction("Next Stat")
+        # Wrapped in a lambda (an inline, throwaway function) here instead
+        # of connecting directly to self.advance_stat, just so the Qt
+        # signal's own arguments (a boolean "checked" state menu actions
+        # can carry) aren't accidentally passed into advance_stat() as a
+        # real argument it doesn't expect.
         next_action.triggered.connect(lambda: self.advance_stat())
 
         # NoRole: macOS moves items called "Settings"/"Preferences" into the
@@ -405,6 +461,9 @@ class MoneyGuiltWidget(QWidget):
             return
         self.set_dimmed(True)
         try:
+            # .exec_() shows the dialog *modally*: unlike .show(), it
+            # blocks right here until the dialog closes, so nothing after
+            # this line runs until the user is done with it.
             dialog.exec_()
         finally:
             self.set_dimmed(False)
@@ -444,6 +503,11 @@ class MoneyGuiltWidget(QWidget):
             "random ID that isn't linked to you. No merchants, dates, or "
             "individual purchases are ever sent.\n\n"
             "You can change this any time in Settings, from the menu bar icon.")
+        # The "role" (AcceptRole/DestructiveRole) mainly affects which
+        # side of the dialog each button lands on, following the
+        # platform's own conventions - it doesn't otherwise change
+        # behavior; that's handled explicitly below by checking which
+        # button object was actually clicked.
         box.addButton("OK", QMessageBox.AcceptRole)
         turn_off = box.addButton("Turn Off Sharing", QMessageBox.DestructiveRole)
         box.exec_()
@@ -477,6 +541,9 @@ class MoneyGuiltWidget(QWidget):
     def save_position(self):
         self.settings.setValue("window/x", self.x())
         self.settings.setValue("window/y", self.y())
+        # QSettings normally writes to disk lazily, in the background;
+        # .sync() forces it to happen right now, so the position is
+        # actually saved even if the app quits a moment later.
         self.settings.sync()
 
     def initial_position(self):
@@ -495,6 +562,11 @@ class MoneyGuiltWidget(QWidget):
                      int(self.settings.value("window/y", type=int)))
         center = QPoint(pos.x() + self.width() // 2,
                         pos.y() + self.height() // 2)
+        # any(...) is True if the widget's center falls inside *any*
+        # currently connected screen's visible area - checking the center
+        # rather than the saved top-left corner means a widget that's
+        # mostly, but not entirely, still on screen still counts as
+        # visible, instead of being treated as lost.
         if any(screen.availableGeometry().contains(center)
                for screen in QApplication.screens()):
             return pos
@@ -570,6 +642,12 @@ class MoneyGuiltWidget(QWidget):
             logger.warning("Could not change screen-capture exclusion")
         return applied
 
+    # showEvent/hideEvent/closeEvent below are examples of *overriding* a
+    # method Qt itself calls automatically at the right moment (whenever
+    # this window is shown, hidden, or asked to close) - nothing in this
+    # codebase calls them directly. `super().showEvent(event)` runs
+    # QWidget's own default handling first, then this subclass adds its
+    # own behavior on top.
     def showEvent(self, event):
         super().showEvent(event)
         self.apply_capture_exclusion()
@@ -604,6 +682,10 @@ class MoneyGuiltWidget(QWidget):
         """Handle close event - hide instead of quit"""
         self.hide()
         self.toggle_action.setText("Show Widget")
+        # event.ignore() tells Qt "don't actually close this window" - so
+        # clicking the (otherwise hidden) close affordance just hides the
+        # widget to the tray, the same as the tray menu's Hide Widget,
+        # rather than destroying the window and ending the app.
         event.ignore()
         logger.info("Widget closed to tray")
 
@@ -626,6 +708,12 @@ class MoneyGuiltWidget(QWidget):
 
     def setup_timers(self):
         """Setup timers for updating stats"""
+        # QTimer is Qt's way of running code repeatedly (or once, with
+        # setSingleShot) after a delay, in milliseconds, without blocking
+        # anything else - its `.timeout` signal fires on schedule and is
+        # connected to whatever method should run at that point, following
+        # the same signal/slot pattern as a button's `.clicked`.
+        #
         # Rotate the stat on the interval chosen in Settings (hourly by default)
         self.stat_timer = QTimer()
         self.stat_timer.timeout.connect(self.show_next_stat)
@@ -721,6 +809,11 @@ class MoneyGuiltWidget(QWidget):
                 'subtitle': 'Mark transactions as wasteful to see stats',
             }
         else:
+            # `% len(self.stats)` (the modulo/remainder operator) wraps the
+            # index back around to 0 once it would otherwise run past the
+            # end of the list, so repeatedly calling this cycles through
+            # every stat and then starts over, instead of eventually
+            # crashing with an out-of-range index.
             stat = self.stats[self.current_stat_index % len(self.stats)]
             self.current_stat_index += 1
 
@@ -766,6 +859,12 @@ class MoneyGuiltWidget(QWidget):
 
         rendered = []
         for line in self._value_lines:
+            # QLabel.setText() treats its text as HTML if it contains any
+            # markup (which is how the colored <span> below works) - so
+            # the raw value text has to be HTML-escaped first (turning a
+            # literal "<" or "&" into "&lt;"/"&amp;") in case a merchant
+            # name happens to contain a character HTML would otherwise
+            # misinterpret as the start of a tag.
             safe = html.escape(line)
             if wasted_text and line == wasted_text:
                 safe = f'<span style="color: {WASTED_COLOR}">{safe}</span>'
@@ -826,15 +925,32 @@ class MoneyGuiltWidget(QWidget):
             return Qt.OpenHandCursor
         return Qt.ArrowCursor
 
+    # Dragging and resizing this frameless (no title bar) window has to be
+    # done by hand, across three events Qt calls in sequence as the mouse
+    # is used: mousePressEvent when the button first goes down,
+    # mouseMoveEvent repeatedly while it's held and moved, and
+    # mouseReleaseEvent when it's let go. Together they remember where the
+    # drag/resize started, and continuously reposition/resize the window
+    # to track the mouse until release.
     def mousePressEvent(self, event):
         """Handle mouse press"""
         if event.button() == Qt.LeftButton:
             corner = self.get_corner_at_pos(event.pos())
             if corner:
+                # Beginning a resize: remember the window's starting shape
+                # and the mouse's starting screen position, so
+                # mouseMoveEvent can measure how far the mouse has moved
+                # from there.
                 self.resize_corner = corner
                 self.resize_start_rect = self.geometry()
                 self.resize_start_pos = event.globalPos()
             else:
+                # Beginning a (possible) drag: `event.pos()` is relative to
+                # this widget's own top-left corner, while `.globalPos()`
+                # is the actual screen coordinate - this stores the offset
+                # between the window's corner and where inside it the
+                # click landed, so mouseMoveEvent can keep that same
+                # offset as the window follows the mouse.
                 self.drag_position = event.globalPos() - self.frameGeometry().topLeft()
                 self.is_dragging = False
             event.accept()
@@ -976,9 +1092,18 @@ class MoneyGuiltWidget(QWidget):
             preferred = max(20, int(30 * scale))
 
         font = self.value_label.font()
+        # `probe` is a scratch QFont, tried at each candidate size without
+        # touching the real font the label currently uses - that only
+        # happens once, at the very end, with whichever size actually fits.
         probe = QFont(font)
         floor = max(12, int(preferred * 0.5))
         chosen = floor
+        # Starts at the largest acceptable size and counts down one pixel
+        # at a time (range(start, stop, -1) counts downward), measuring
+        # with QFontMetrics - Qt's way of asking "how many pixels would
+        # this text actually take up at this font?" - until it finds the
+        # biggest size that still fits both the width and height budgets.
+        # Stops at the very first (so largest) size that fits.
         for size in range(preferred, floor - 1, -1):
             probe.setPixelSize(size)
             metrics = QFontMetrics(probe)
@@ -1037,6 +1162,12 @@ class MoneyGuiltWidget(QWidget):
 
     def update_rounded_corners_mask(self):
         """Update the rounded corners mask based on current size"""
+        # A QWidget is normally a plain rectangle - setMask() is what
+        # actually makes the four corners see-through (clicks and
+        # painting both stop at the mask's edge), by giving the window a
+        # QRegion shaped like the rounded rectangle instead of its full
+        # bounding box. This has to be rebuilt and reapplied any time the
+        # widget's size changes (see resizeEvent above).
         path = QPainterPath()
         path.addRoundedRect(QRectF(self.rect()), 24, 24)
         region = QRegion(path.toFillPolygon().toPolygon())
@@ -1102,14 +1233,21 @@ class MoneyGuiltWidget(QWidget):
 
 def main():
     """Main entry point"""
+    # QApplication is the one object every PyQt5 program needs before
+    # creating any windows - it manages the event loop (see app.exec_()
+    # below) and app-wide settings like this window icon.
     app = QApplication(sys.argv)
     app.setWindowIcon(app_icon())
 
+    # QLockFile is Qt's cross-platform way to enforce "only one instance of
+    # this app at a time": tryLock() creates (or claims) a lock file and
+    # fails if another running process already holds it.
+    #
     # Only one copy at a time. The lock is released if the process dies, so a
     # crash can't leave the widget unable to start.
     lock = QLockFile(os.path.join(QDir.tempPath(), "money_guilt.lock"))
     lock.setStaleLockTime(0)
-    if not lock.tryLock(100):
+    if not lock.tryLock(100):  # waits up to 100ms for the lock
         logger.info("Money Guilt is already running; exiting")
         sys.exit(0)
 
@@ -1124,15 +1262,26 @@ def main():
     widget.move(pos)
     widget.setVisible(True)
     widget.show()
-    widget.raise_()
-    widget.activateWindow()
+    widget.raise_()          # brings it to the front of other windows
+    widget.activateWindow()  # gives it keyboard focus
     widget.setFocus()
 
     logger.info(f"Widget shown at ({pos.x()}, {pos.y()})")
 
+    # QTimer.singleShot(0, ...) schedules a call for "as soon as possible",
+    # but only once Qt's event loop (started by app.exec_() below) is
+    # actually running - calling widget.startup() directly here, before
+    # the window has really finished appearing, could show dialogs before
+    # the widget is ready to be interacted with.
+    #
     # Ask about new transactions once the event loop is running
     QTimer.singleShot(0, widget.startup)
 
+    # app.exec_() starts Qt's event loop - the part of the program that
+    # waits for and dispatches clicks, timer ticks, and everything else,
+    # for as long as the app runs. Nothing after this line executes until
+    # the app actually quits, at which point exec_() returns an exit code
+    # that sys.exit() passes along to the operating system.
     sys.exit(app.exec_())
 
 

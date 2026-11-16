@@ -1,4 +1,11 @@
-"""Transaction categorization engine for Money Guilt with machine learning"""
+"""Transaction categorization engine for Money Guilt with machine learning
+
+Despite the "machine learning" in the title, there's no model being
+trained here - it's simpler than that: a list of keywords per category,
+a lookup table of how often research says people regret each category,
+and a small file that remembers what you've personally told the app about
+specific merchants. "Learning" just means writing to that file.
+"""
 
 import re
 import json
@@ -7,7 +14,11 @@ import os
 from data import paths
 from typing import Dict, List, Tuple, Optional
 
-# Category keywords - maps merchant keywords to spending categories
+# Category keywords - maps merchant keywords to spending categories.
+# Each key is a category name; each value is a list of lowercase words or
+# phrases that, if found in a transaction's merchant name or description,
+# suggest it belongs to that category. See _score_category() below for how
+# these are actually used to pick a winner.
 CATEGORY_KEYWORDS = {
     "fees": [
         "overdraft", "nsf fee", "insufficient funds", "atm fee",
@@ -104,6 +115,8 @@ WASTE_THRESHOLD = 0.5
 
 def _plain(text: str) -> str:
     """Lower-case with apostrophes dropped, so "McDonald's" matches "mcdonalds"."""
+    # "\u2019" is the curly right single-quote character some merchant names
+    # use instead of a plain apostrophe; both need stripping to match.
     return text.lower().replace("'", "").replace("\u2019", "")
 
 
@@ -111,14 +124,19 @@ class TransactionCategorizer:
     """Categorize transactions with user learning capabilities"""
 
     def __init__(self, overrides_file: str = None):
-        # Build lowercase keyword maps
+        # Build lowercase keyword maps. CATEGORY_KEYWORDS above is the raw
+        # list written by hand; this loop runs _plain() over every keyword
+        # once, up front, so later lookups don't have to repeat that work
+        # on every single transaction.
         self.categories = {}
         for category, keywords in CATEGORY_KEYWORDS.items():
             self.categories[category] = [_plain(k) for k in keywords]
 
         self.wasteful_keywords = [w.lower() for w in STRONG_WASTE_CUES]
 
-        # Learned merchant overrides from user manual categorizations
+        # Learned merchant overrides from user manual categorizations.
+        # `overrides_file or paths.overrides_path()` lets tests pass in a
+        # throwaway file path instead of using the app's real one.
         self.overrides_file = overrides_file or paths.overrides_path()
         self.merchant_overrides, self.merchant_wasteful = self._load_overrides()
 
@@ -140,12 +158,15 @@ class TransactionCategorizer:
             if isinstance(data, dict):
                 return data, {}
 
-        return {}, {}
+        return {}, {}  # no file yet - nothing learned so far
 
     def _save_overrides(self):
         """Save learned categories and wasteful flags to file."""
         try:
             with open(self.overrides_file, 'w') as f:
+                # indent=2 just makes the saved JSON file readable by a
+                # human if someone opens it - it has no effect on how the
+                # app reads it back.
                 json.dump({'categories': self.merchant_overrides,
                            'wasteful': self.merchant_wasteful}, f, indent=2)
         except Exception as e:
@@ -190,11 +211,15 @@ class TransactionCategorizer:
 
         merchant_lower = merchant_name.lower()
 
-        # Check if we've learned this merchant before
+        # Check if we've learned this merchant before - an exact match on
+        # the full name, e.g. a merchant the user categorized by hand
+        # before with this exact spelling.
         if merchant_lower in self.merchant_overrides:
             return self.merchant_overrides[merchant_lower]
 
-        # Try partial merchant match (e.g., "Starbucks Downtown" contains "starbucks")
+        # Try partial merchant match (e.g., "Starbucks Downtown" contains "starbucks").
+        # `in` here is substring containment either direction, so it also
+        # catches the reverse case where the learned name is the longer one.
         for learned_merchant, category in self.merchant_overrides.items():
             if learned_merchant in merchant_lower or merchant_lower in learned_merchant:
                 return category
@@ -210,11 +235,13 @@ class TransactionCategorizer:
             if score > 0:
                 category_scores[category] = score
 
-        # Amount-based heuristics
+        # Amount-based heuristics: only used as a last resort, when no
+        # keyword matched anything at all.
         if amount and not category_scores:
             category_scores = self._amount_based_category(amount)
 
-        # Return best match or default
+        # Return best match or default. max(dict, key=dict.get) finds
+        # whichever category key has the highest score value.
         if category_scores:
             return max(category_scores, key=category_scores.get)
         return "other"
@@ -232,13 +259,21 @@ class TransactionCategorizer:
         if description:
             text += " " + _plain(description)
 
+        # Fees are treated as an immediate, certain case - overdraft and
+        # ATM fees buy literally nothing, so there's no need to also run
+        # them through the category-based scoring below.
         if any(cue in text for cue in FEE_CUES):
             return WASTE_PRIORS["fees"]
 
         if not category:
             category = self.categorize(merchant_name, description=description)
+        # The category's baseline rate (e.g. "eating out" = 0.4), or a low
+        # default for any category with no specific research behind it.
         score = WASTE_PRIORS.get(category, DEFAULT_WASTE_PRIOR)
 
+        # Each cue list nudges the score up further if it matches - these
+        # stack, so a transaction can match more than one (e.g. a delivery
+        # order from a marketplace app would get both bumps).
         if any(cue in text for cue in STRONG_WASTE_CUES):
             score += 0.6
         if any(cue in text for cue in DELIVERY_CUES):
@@ -247,7 +282,7 @@ class TransactionCategorizer:
             score += 0.15
         if any(cue in text for cue in STREAMING_CUES):
             score += 0.2
-        return min(score, 1.0)
+        return min(score, 1.0)  # never report more than 100% likely
 
     def is_wasteful(self, merchant_name: str, category: str = None,
                     description: str = None) -> bool:
@@ -279,7 +314,10 @@ class TransactionCategorizer:
         score = 0.0
         for keyword in keywords:
             if keyword in text:
-                # Word boundary match scores higher
+                # Word boundary match scores higher: "gas" appearing as its
+                # own word ("gas station") is a much stronger signal than
+                # "gas" just happening to appear inside a longer word
+                # ("Vegas"), so it's worth more points.
                 if self._is_word_boundary_match(text, keyword):
                     score += 2.0
                 else:
@@ -288,6 +326,12 @@ class TransactionCategorizer:
 
     def _is_word_boundary_match(self, text: str, keyword: str) -> bool:
         """Check if keyword matches at word boundaries"""
+        # \b in a regex matches the invisible boundary between a word
+        # character and a non-word character (e.g. a space or the start of
+        # the string) - wrapping the keyword in \b...\b means "this exact
+        # word", not "this substring anywhere". re.escape() makes sure any
+        # special regex characters in the keyword itself (like the "-" in
+        # "7-eleven") are treated as literal text, not regex syntax.
         pattern = r'\b' + re.escape(keyword) + r'\b'
         return bool(re.search(pattern, text))
 
@@ -320,16 +364,20 @@ class TransactionCategorizer:
             if score > 0:
                 scores[category] = score
 
+        # sorted(..., key=lambda x: x[1], reverse=True) sorts the
+        # (category, score) pairs by score, highest first; [:top_n] then
+        # keeps only the first `top_n` of them.
         sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
         return sorted_scores[:top_n]
 
 
-# Global instance
+# Global instance - one categorizer shared by the whole app, rather than
+# every caller creating (and re-reading the overrides file for) its own.
 _categorizer = None
 
 def get_categorizer() -> TransactionCategorizer:
     """Get or create global categorizer"""
-    global _categorizer
+    global _categorizer  # needed to assign to the module-level variable above
     if _categorizer is None:
         _categorizer = TransactionCategorizer()
     return _categorizer

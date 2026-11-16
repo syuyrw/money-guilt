@@ -29,15 +29,23 @@ CATEGORY_EXPR = "COALESCE(NULLIF(category_primary, ''), NULLIF(category, ''), 'U
 
 
 def _rows(sql, params=()):
+    """Run a query and get back a plain list of rows, with the connection
+    already closed - a shortcut so every stat function below doesn't have
+    to repeat the `with get_db() as conn:` boilerplate itself."""
     with get_db() as conn:
         return conn.execute(sql, params).fetchall()
 
 
 def _money(x):
+    """A dollar amount formatted with a thousands separator and 2 decimal
+    places, e.g. _money(1234.5) -> "$1,234.50"."""
     return f"${x:,.2f}"
 
 
 def _stat(kind, title, value, subtitle='', wasted=None, **data):
+    """Builds one of the standard "stat" dicts described at the top of
+    stats.py. `**data` collects any extra keyword arguments the caller
+    passes (e.g. `visits=5`) into the 'data' dict, for tests to inspect."""
     stat = {'type': kind, 'title': title, 'value': value,
             'subtitle': subtitle, 'data': data}
     if wasted is not None:
@@ -46,6 +54,8 @@ def _stat(kind, title, value, subtitle='', wasted=None, **data):
 
 
 def _env_float(name):
+    """A positive number from an environment variable (e.g. HOURLY_RATE),
+    or None if it's missing, not a number, or zero/negative."""
     try:
         value = float(os.getenv(name, ''))
     except ValueError:
@@ -75,11 +85,18 @@ def most_visited_merchant():
 
 
 def avg_days_between_impulse_buys():
+    # {r['date'] for r in ...} is a *set* comprehension: it collects the
+    # distinct dates something wasteful happened on (multiple purchases on
+    # the same day only count once), then sorted() turns that set into an
+    # ordered list.
     dates = sorted({r['date'] for r in _rows(
         "SELECT date FROM transactions WHERE is_wasteful = 1 AND amount > 0")})
     days = [datetime.strptime(d, '%Y-%m-%d') for d in dates]
     if len(days) < 2:
         return None
+    # zip(days, days[1:]) pairs up each date with the one right after it:
+    # (day[0], day[1]), (day[1], day[2]), ... - subtracting each pair gives
+    # the gap, in days, between consecutive regretted-purchase days.
     gaps = [(b - a).days for a, b in zip(days, days[1:])]
     avg = sum(gaps) / len(gaps)
     return _stat('impulse_gap', 'Days Between Impulse Buys', f"{avg:.1f} days",
@@ -137,6 +154,9 @@ def regret_streak():
     rows = _rows("""SELECT is_wasteful FROM transactions
                     WHERE amount > 0 AND (is_wasteful = 1 OR reviewed = 1)
                     ORDER BY date, created_at""")
+    # Walks through every reviewed transaction in date order, counting how
+    # many wasteful ones in a row show up before a non-wasteful one resets
+    # the count back to zero, and remembers the longest such run seen.
     best = run = 0
     for r in rows:
         run = run + 1 if r['is_wasteful'] else 0
@@ -158,9 +178,14 @@ def late_night_spending():
     total = count = 0
     for r in rows:
         try:
+            # Python's datetime.fromisoformat() doesn't understand a
+            # trailing "Z" (shorthand for UTC in many APIs' timestamps),
+            # so it's swapped for "+00:00" first, which it does understand.
             hour = datetime.fromisoformat(r['datetime'].replace('Z', '+00:00')).hour
         except ValueError:
-            continue
+            continue  # a timestamp in a format this can't parse - skip it
+        # LATE_NIGHT = (22, 3) means "10pm or later, OR before 3am" - the
+        # OR is needed because this window wraps past midnight.
         if hour >= LATE_NIGHT[0] or hour < LATE_NIGHT[1]:
             total += r['amount']
             count += 1
@@ -175,6 +200,8 @@ def weekend_vs_weekday():
                     WHERE amount > 0 AND date >= date('now', '-28 days')""")
     if not rows:
         return None
+    # Python's .weekday() returns 0 for Monday through 6 for Sunday, so
+    # ">= 5" means Saturday or Sunday.
     weekend = sum(r['amount'] for r in rows
                   if datetime.strptime(r['date'], '%Y-%m-%d').weekday() >= 5)
     weekday = sum(r['amount'] for r in rows) - weekend
@@ -189,6 +216,10 @@ def weekend_vs_weekday():
 
 
 def post_payday_spending():
+    # A "payday" here is any day with a deposit of at least PAYDAY_MIN.
+    # Recall: Plaid represents money leaving the account as positive and
+    # money coming in as negative, so "amount <= -PAYDAY_MIN" means
+    # "a deposit of $500 or more".
     paydays = _rows("""SELECT date FROM transactions
                        WHERE amount <= ? AND date >= date('now', '-90 days')
                        GROUP BY date""", (-PAYDAY_MIN,))
@@ -198,6 +229,8 @@ def post_payday_spending():
     for p in paydays:
         d = datetime.strptime(p['date'], '%Y-%m-%d')
         end = (d + timedelta(days=2)).strftime('%Y-%m-%d')
+        # Spending strictly after payday through two days later - one
+        # query per payday found, then averaged below.
         t = _rows("""SELECT SUM(amount) AS t FROM transactions
                      WHERE amount > 0 AND date > ? AND date <= ?""",
                   (p['date'], end))[0]['t'] or 0
@@ -210,10 +243,18 @@ def post_payday_spending():
 
 
 def discretionary_change():
+    # Builds "?,?,?,?" (one "?" per entry in DISCRETIONARY) for a SQL
+    # "IN (...)" clause - again, only placeholders go into the query text
+    # itself; the actual category names are passed as parameters below.
     marks = ",".join("?" * len(DISCRETIONARY))
     where = f"amount > 0 AND (category_primary IN ({marks}) OR category = 'eating out')"
 
     def window(start, end):
+        # A small nested helper (defined inside discretionary_change, so
+        # it can reuse `where` from the enclosing function without
+        # needing it passed in explicitly) that sums spending between two
+        # relative dates, e.g. window('-30 days', '+1 day') for "the last
+        # 30 days, up through tomorrow".
         return _rows(f"""SELECT SUM(amount) AS t FROM transactions WHERE {where}
                          AND date >= date('now', ?) AND date < date('now', ?)""",
                      DISCRETIONARY + (start, end))[0]['t'] or 0
@@ -264,6 +305,10 @@ def find_recurring():
     rows = _rows("""SELECT name, date, amount, is_wasteful, reviewed FROM transactions
                     WHERE amount > 0 AND date >= date('now', '-150 days')
                     ORDER BY date""")
+    # groups.setdefault(key, []) looks up `key` in the dict, and if it's
+    # not there yet, creates it with an empty list first - either way it
+    # returns the list for that key, ready to .append() to. The net effect
+    # is grouping every transaction by its lowercased merchant name.
     groups = {}
     for r in rows:
         groups.setdefault(r['name'].lower(), []).append(r)
@@ -271,17 +316,29 @@ def find_recurring():
     found = []
     for charges in groups.values():
         if len(charges) < 3:
-            continue
+            continue  # need at least 3 occurrences to call it "recurring"
         amounts = [c['amount'] for c in charges]
+        # median() rather than average, so one unusually large or small
+        # charge from this merchant doesn't throw off what "typical" means.
         typical = median(amounts)
+        # Reject this merchant if any charge is more than 15% off the
+        # typical amount - too much variation to call "the same charge
+        # repeating".
         if any(abs(a - typical) > 0.15 * typical for a in amounts):
             continue
         days = [datetime.strptime(c['date'], '%Y-%m-%d') for c in charges]
         gaps = [(b - a).days for a, b in zip(days, days[1:])]
+        # The typical gap between charges needs to be roughly a month
+        # (25-35 days) - this is what distinguishes "a subscription" from,
+        # say, three unrelated $12 coffee purchases that happened to be
+        # similar amounts.
         if not 25 <= median(gaps) <= 35:
             continue
         found.append({
             'name': charges[0]['name'], 'monthly': typical,
+            # "Kept" if the user has explicitly reviewed at least one of
+            # these charges and said it's NOT wasteful - i.e. this is a
+            # subscription they consciously want, not a forgotten one.
             'kept': any(c['reviewed'] and not c['is_wasteful'] for c in charges),
         })
     return found
@@ -320,6 +377,8 @@ def fees_paid():
                  f"{r['n']} fees, nothing to show for it", wasted=r['t'])
 
 
+# A list of the actual function objects (not calls - no parentheses),
+# so generate_more_stats() below can loop over them and call each one.
 ALL_STATS = [
     most_visited_merchant, avg_days_between_impulse_buys, regret_ratio,
     total_regret_all_time, most_regretted_category, most_regretted_merchant,
@@ -331,6 +390,9 @@ ALL_STATS = [
 
 
 def generate_more_stats():
+    """Calls every stat function above and keeps only the ones with
+    something to show - each one returns None when there isn't enough
+    data to say something honest (see the module docstring)."""
     stats = []
     for fn in ALL_STATS:
         stat = fn()

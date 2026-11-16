@@ -58,6 +58,13 @@ CONFIRM_ERASE = (
     "remove anything you shared (use the buttons above for those).")
 
 
+# QThread is PyQt5's class for running code on a separate thread. Both
+# workers below follow the same shape: override run() with the actual
+# (possibly slow, network-bound) work, and emit a signal with the result
+# when done, rather than returning a value directly - a background thread
+# can't safely update the UI itself, so the signal is how the result gets
+# handed back to the main thread (see _deletion_done/_disconnect_done,
+# which are connected to these `outcome` signals).
 class DeleteWorker(QThread):
     """Runs the deletion off the interface thread; it can wait on the network."""
     outcome = pyqtSignal(str)
@@ -289,7 +296,15 @@ class SettingsDialog(QDialog):
 
     # ------------------------------------------------------ reading state
     def load_values(self):
-        """Fill every control from the real settings without triggering them."""
+        """Fill every control from the real settings without triggering them.
+
+        Calling setChecked()/setValue() etc. on a control fires its
+        toggled/valueChanged signal just like a real user action would -
+        which would otherwise cause this method, while simply *displaying*
+        the saved settings, to immediately turn around and try to re-save
+        each one. self._loading (checked by _apply() below) is the guard
+        that prevents that feedback loop.
+        """
         w = self.app_widget
         was_loading, self._loading = self._loading, True
         try:
@@ -328,7 +343,15 @@ class SettingsDialog(QDialog):
 
     # ------------------------------------------------------------ actions
     def _apply(self, action):
-        """Run a change to the widget, unless the window is only filling itself in."""
+        """Run a change to the widget, unless the window is only filling itself in.
+
+        Every one of this dialog's _on_*_toggled methods below wraps its
+        real work in a small `action` function (often a lambda, Python's
+        syntax for a tiny unnamed function written inline) and hands it to
+        this method, rather than just doing the work directly - that's
+        what lets load_values() above suppress all of them at once with a
+        single `self._loading` flag.
+        """
         if self._loading:
             return
         action()
@@ -437,10 +460,18 @@ class SettingsDialog(QDialog):
 
     def _wait_for_worker(self):
         # A running QThread must not be destroyed; the request gives up in 5 s.
+        # .wait(8000) blocks for up to 8000ms (8 seconds) for the thread to
+        # finish on its own; if it's not running (None) or already
+        # finished, this returns immediately.
         for worker in (self._worker, self._disconnect_worker):
             if worker is not None:
                 worker.wait(8000)
 
     def done(self, result):
+        # QDialog.done() is what actually runs when the dialog is about to
+        # close (by any means - the Close button, pressing Escape, etc.).
+        # Overriding it here to wait for any in-flight background work
+        # first means closing the window can't yank a QThread out from
+        # under a network request that's still running.
         self._wait_for_worker()
         super().done(result)

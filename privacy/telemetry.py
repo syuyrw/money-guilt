@@ -92,7 +92,13 @@ def mark_notice_shown():
 def collector_url():
     """The collector's address, or None. Must be https (http only for localhost)."""
     url = (os.getenv("MONEY_GUILT_COLLECTOR_URL") or "").strip().rstrip("/")
+    # urlparse() breaks a URL string into its pieces (scheme, hostname,
+    # path, ...) without actually connecting to anything.
     parsed = urlparse(url)
+    # Plain http is refused except when talking to this same machine
+    # (localhost/127.0.0.1, e.g. for local testing) - sending a wasted
+    # total over an unencrypted connection to a real server would let
+    # anyone on the network see it in transit.
     if parsed.scheme == "https" and parsed.hostname:
         return url
     if parsed.scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1"):
@@ -109,9 +115,16 @@ def build_report(install_id, wasted):
 
 
 def _post(url, report):
+    # urllib.request is Python's built-in HTTP client (no extra library
+    # needed for a simple POST like this).
     request = urllib.request.Request(
         url + "/report", data=json.dumps(report).encode(),
         headers={"Content-Type": "application/json"}, method="POST")
+    # The `# nosec B310` comment tells the bandit security scanner not to
+    # flag this urlopen() call - urlopen() can in general open any URL
+    # scheme, including unsafe ones like "file://", but collector_url()
+    # above has already guaranteed this URL is https (or localhost http),
+    # so that particular risk doesn't apply here.
     with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:  # nosec B310 - scheme checked in collector_url()
         return 200 <= response.status < 300
 
@@ -149,6 +162,8 @@ def _finish_delete(post):
     config = load_config()
     install_id = config.get("install_id")
     if not install_id:
+        # No install_id means nothing was ever sent under this install, so
+        # there's nothing on any server to go delete.
         _forget_install(config)
         return "nothing"
 
@@ -165,8 +180,14 @@ def _finish_delete(post):
     try:
         done = post(url, install_id)
     except (OSError, ValueError, urllib.error.URLError):
+        # Covers network failures (OSError/URLError) and a response that
+        # can't be parsed as expected (ValueError) - all treated the same
+        # way: the deletion didn't go through, try again later.
         done = False
     except Exception:
+        # logger.exception() (rather than .error()) also records the full
+        # traceback, which is worth having for a failure mode nobody
+        # anticipated specifically.
         logger.exception("Unexpected error deleting the reported total")
         done = False
 
@@ -225,21 +246,32 @@ def report_now(get_wasted=None, post=None, post_delete=None):
             # A deletion that hasn't gone through comes first, and nothing is
             # reported until it has.
             retry_pending_delete(post_delete)   # None means the real network call
-            config = load_config()
+            config = load_config()  # re-read: retry_pending_delete() may have changed it
             if config.get("pending_delete") is True:
-                return False
+                return False  # still couldn't delete - don't report either
         url = collector_url()
         if config.get("enabled") is False or not url:
             return False
         if not config.get("install_id"):
+            # First time reporting on this install: mint a random,
+            # anonymous ID (a UUID - a long random identifier, not tied
+            # to any personal info) to tell repeated reports from this
+            # same install apart from everyone else's, without it meaning
+            # anything on its own.
             config["install_id"] = str(uuid.uuid4())
             save_config(config)
 
         if get_wasted is None:
+            # Imported here, not at the top of the file, so a caller (like
+            # a test) can pass in its own get_wasted function instead and
+            # this module never has to import the real database unless
+            # it's actually needed.
             from data.database import get_total_wasted as get_wasted
         report = build_report(config["install_id"], get_wasted())
 
-        # Nothing new to say
+        # Nothing new to say - the total hasn't changed since the last
+        # successful report, so sending it again would be a wasted
+        # network call with no new information.
         if config.get("last_sent") == [report["total_wasted"]]:
             return False
 
@@ -248,6 +280,9 @@ def report_now(get_wasted=None, post=None, post_delete=None):
             save_config(config)
             return True
     except (OSError, ValueError, urllib.error.URLError):
+        # Any ordinary network failure - logged, but swallowed rather than
+        # raised, because reporting is a nice-to-have, not a required part
+        # of the app. See the function's own docstring above.
         logger.warning("Could not report the wasted total")
     except Exception:
         logger.exception("Unexpected error reporting the wasted total")
